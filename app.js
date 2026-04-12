@@ -220,6 +220,8 @@ const App = (() => {
   let _gridDragOccurred = false;
   let _salesItemMode = 'simple';     // 売上管理表の表示形式を永続化
   let _salesFilterStatus = 'active'; // 売上管理表のフィルタを永続化
+  let _salesViewMode = 'list';       // 売上管理表のビューモードを永続化
+  let JAN_CODES = [];                // JANコードリスト
 
   const TAB_TITLES = {home:'分析',sales:'売上管理表',products:'商品マスタ',inventory:'同期',settings:'設定'};
 
@@ -279,6 +281,7 @@ const App = (() => {
       case 'settings':   await pgSettings(main); break;
       case 'platform-settings': await pgPlatformSettings(main,actionBtn); break;
       case 'shipping-settings': await pgShippingSettings(main,actionBtn); break;
+      case 'jan-settings': await pgJanSettings(main,actionBtn); break;
     }
   }
 
@@ -291,48 +294,126 @@ const App = (() => {
   // =====================================================================
   async function pgHome(main) {
     const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
-    const now=new Date(),y=now.getFullYear(),m=now.getMonth();
-    const monthL=listings.filter(l=>{
-      const d=new Date(l.saleDate||l.createdAt);
-      return d.getFullYear()===y&&d.getMonth()===m&&l.status!=='canceled';
+    const completedL=listings.filter(l=>l.status==='completed');
+    const now=new Date();
+    let tab='monthly';
+    let mYear=now.getFullYear(),mMonth=now.getMonth();
+    let aYear=now.getFullYear();
+    let rkPeriod='month',rkYear=now.getFullYear(),rkMonth=now.getMonth(),rkSort='qty';
+    let invDays=30,invShowPaused=false,invShowDiscontinued=false;
+    let pfPeriod='month',pfYear=now.getFullYear(),pfMonth=now.getMonth();
+
+    const MO=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+    const fbm=(list,y,m)=>list.filter(l=>{const d=new Date(l.saleDate||l.createdAt);return d.getFullYear()===y&&d.getMonth()===m;});
+    const fby=(list,y)=>list.filter(l=>new Date(l.saleDate||l.createdAt).getFullYear()===y);
+    const cs=list=>({
+      sales:list.reduce((a,l)=>a+(Number(l.salePrice)||0),0),
+      cost:list.reduce((a,l)=>a+(Number(l.purchasePrice)||0)+(Number(l.fee)||0)+(Number(l.shipping)||0),0),
+      profit:list.reduce((a,l)=>a+(Number(l.profit)||0),0),
+      get margin(){return this.sales>0?(this.profit/this.sales*100).toFixed(1):'0.0';},
+      count:list.length
     });
-    const totalSales=monthL.reduce((a,l)=>a+(Number(l.salePrice)||0),0);
-    const totalProfit=monthL.reduce((a,l)=>a+(Number(l.profit)||0),0);
-    const roi=totalSales>0?Math.round(totalProfit/totalSales*100):0;
-    const trading=listings.filter(l=>['payment','shipping','review'].includes(l.status)).length;
-    const instock=products.reduce((a,p)=>a+(p.stockCount||0),0);
-    main.innerHTML=`
-    <div class="page-pad" style="background:var(--gray-light);">
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-label">${y}年${m+1}月 売上</div><div class="stat-value red" style="font-size:18px;">${yen(totalSales)}</div><div class="stat-sub">${monthL.length}件</div></div>
-        <div class="stat-card"><div class="stat-label">${y}年${m+1}月 利益</div><div class="stat-value green" style="font-size:18px;">${yen(totalProfit)}</div><div class="stat-sub">利益率 ${roi}%</div></div>
-        <div class="stat-card"><div class="stat-label">総在庫数</div><div class="stat-value">${instock}</div><div class="stat-sub">${products.length}種類</div></div>
-        <div class="stat-card"><div class="stat-label">取引中</div><div class="stat-value ${trading>0?'red':''}">${trading}</div><div class="stat-sub">件</div></div>
-      </div>
-      <div style="background:var(--white);margin-bottom:10px;">
-        <div class="section-hd">クイックアクション</div>
-        <div style="padding:12px;display:flex;flex-direction:column;gap:8px;">
-          <button class="btn btn-primary btn-full" onclick="App.switchTab('products')">＋ 商品を追加・管理</button>
-          <button class="btn btn-outline-red btn-full" onclick="App.navigate('sale-form',{},'売上を記録')">＋ 売上を記録</button>
-        </div>
-      </div>
-      ${trading>0?`<div style="background:var(--white);margin-bottom:10px;"><div class="section-hd" style="color:var(--warning);">⚠ 取引中 ${trading}件</div><button style="width:100%;padding:14px 16px;text-align:left;font-size:14px;color:var(--primary);" onclick="App.switchTab('sales')">取引中の売上を確認する →</button></div>`:''}
-      <div style="background:var(--white);margin-bottom:10px;">
-        <div class="section-hd">最近の売上</div>
-        ${(()=>{
-          const recent=[...listings].sort((a,b)=>b.createdAt-a.createdAt).slice(0,6);
-          if(!recent.length) return '<div style="padding:20px;text-align:center;font-size:14px;color:var(--text-secondary);">まだ売上がありません</div>';
-          return recent.map(l=>{
-            const p=getPlatform(l.platform),profit=Number(l.profit)||0,st=STATUS_MAP[l.status]||STATUS_MAP.completed;
-            return `<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--gray-border);cursor:pointer;" onclick="App.navigate('sale-detail',{id:'${l.id}'},'売上詳細')">
-              <span class="platform-badge" style="${platformBadgeStyle(l.platform)}">${p.name}</span>
-              <div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${esc(l.productName)}</div><div style="font-size:11px;color:var(--text-secondary);">${fmtDate(l.saleDate)} · <span class="badge ${st.badge}">${st.label}</span></div></div>
-              <div style="text-align:right;flex-shrink:0;"><div style="font-size:14px;font-weight:700;color:${profit>=0?'var(--success)':'var(--danger)'};">${yen(profit)}</div><div style="font-size:11px;color:var(--text-secondary);">${yen(l.salePrice)}</div></div>
-            </div>`;
-          }).join('');
-        })()}
-      </div>
+    const sh=s=>`<div class="ana-stats-grid">
+      <div class="ana-stat"><div class="ana-stat-lbl">売上</div><div class="ana-stat-val">${yen(s.sales)}</div></div>
+      <div class="ana-stat"><div class="ana-stat-lbl">コスト</div><div class="ana-stat-val">${yen(s.cost)}</div></div>
+      <div class="ana-stat"><div class="ana-stat-lbl">粗利</div><div class="ana-stat-val" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</div></div>
+      <div class="ana-stat"><div class="ana-stat-lbl">利益率</div><div class="ana-stat-val">${s.margin}%</div></div>
+      <div class="ana-stat"><div class="ana-stat-lbl">販売数</div><div class="ana-stat-val">${s.count}件</div></div>
     </div>`;
+
+    function renderContent(){
+      const body=document.getElementById('__ana-body');
+      if(!body)return;
+
+      if(tab==='monthly'){
+        const s=cs(fbm(completedL,mYear,mMonth));
+        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
+
+      }else if(tab==='yearly'){
+        const s=cs(fby(completedL,aYear));
+        const mrows=Array.from({length:12},(_,i)=>{const ms=cs(fbm(completedL,aYear,i));return `<tr><td>${MO[i]}</td><td class="n">${yen(ms.sales)}</td><td class="n" style="color:${ms.profit>=0?'var(--success)':'var(--danger)'};">${yen(ms.profit)}</td><td class="n">${ms.margin}%</td><td class="n">${ms.count}</td></tr>`;}).join('');
+        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('y',-1)">‹</button><span class="ana-period-lbl">${aYear}年</span><button class="ana-nav" onclick="App._anaNav('y',1)">›</button></div>${sh(s)}<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>月</th><th class="n">売上</th><th class="n">粗利</th><th class="n">利益率</th><th class="n">件数</th></tr></thead><tbody>${mrows}</tbody></table></div>`;
+
+      }else if(tab==='ranking'){
+        const list=rkPeriod==='month'?fbm(completedL,rkYear,rkMonth):fby(completedL,rkYear);
+        const plbl=rkPeriod==='month'?`${rkYear}年${MO[rkMonth]}`:`${rkYear}年`;
+        const pmap=Object.fromEntries(products.map(p=>[p.id,p]));
+        const map={};
+        list.forEach(l=>{
+          const pid=l.productId||'__x';
+          if(!map[pid])map[pid]={name:l.productName||'（不明）',code:l.productCode||l.productTitle||'',qty:0,sales:0,profit:0,lastDate:null,pid};
+          map[pid].qty++;map[pid].sales+=Number(l.salePrice)||0;map[pid].profit+=Number(l.profit)||0;
+          if(!map[pid].lastDate||l.saleDate>map[pid].lastDate)map[pid].lastDate=l.saleDate;
+        });
+        let ranked=Object.values(map);
+        if(rkSort==='qty')ranked.sort((a,b)=>b.qty-a.qty);
+        else if(rkSort==='profit')ranked.sort((a,b)=>b.profit-a.profit);
+        else if(rkSort==='sales')ranked.sort((a,b)=>b.sales-a.sales);
+        else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
+        ranked=ranked.slice(0,30);
+        const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'粗利'},{k:'sales',l:'売上'},{k:'margin',l:'粗利率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
+        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td style="font-size:12px;">${esc(item.name)}${item.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(item.code)}</div>`:''}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(item.lastDate)}</td></tr>`;}).join('');
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th>商品名</th><th class="n">販売数</th><th class="n">売上</th><th class="n">粗利</th><th class="n">粗利率</th><th class="n">在庫</th><th class="n">最終日</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+
+      }else if(tab==='inventory'){
+        const cutMs=Date.now()-invDays*86400000;
+        const d30Ms=Date.now()-30*86400000;
+        const smap={};
+        completedL.forEach(l=>{
+          if(!smap[l.productId])smap[l.productId]={qty30:0,qtyAll:0,sales:0,profit:0,lastDate:null};
+          smap[l.productId].qtyAll++;
+          smap[l.productId].sales+=Number(l.salePrice)||0;
+          smap[l.productId].profit+=Number(l.profit)||0;
+          if(!smap[l.productId].lastDate||l.saleDate>smap[l.productId].lastDate)smap[l.productId].lastDate=l.saleDate;
+          if(l.saleDate&&new Date(l.saleDate).getTime()>=d30Ms)smap[l.productId].qty30++;
+        });
+        const prods=products.filter(p=>{
+          const st=p.productStatus||'active';
+          if(st==='paused'&&!invShowPaused)return false;
+          if(st==='discontinued'&&!invShowDiscontinued)return false;
+          return true;
+        });
+        const ann=prods.map(p=>{
+          const s=smap[p.id]||{qty30:0,qtyAll:0,sales:0,profit:0,lastDate:null};
+          const stk=p.stockCount||0,pst=p.productStatus||'active';
+          const lastMs=s.lastDate?new Date(s.lastDate).getTime():0;
+          const labels=[];
+          if(stk===0&&pst==='active')labels.push({l:'在庫切れ',c:'var(--danger)'});
+          if(stk>0&&stk<=3&&s.qty30>0)labels.push({l:'補充候補',c:'#2196F3'});
+          if(s.qtyAll>0&&lastMs<cutMs)labels.push({l:'長期未販売',c:'#FF9800'});
+          return {p,s,labels};
+        });
+        const rows=ann.map(({p,s,labels})=>`<tr><td style="font-size:12px;">${esc(p.name)}${p.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(p.code)}</div>`:''}${labels.length?`<div style="margin-top:2px;">${labels.map(l=>`<span class="inv-lbl" style="background:${l.c}20;color:${l.c};">${l.l}</span>`).join('')}</div>`:''}</td><td class="n">${p.stockCount||0}</td><td class="n">${s.qty30}</td><td class="n">${s.qtyAll}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(s.lastDate)||'−'}</td><td class="n">${yen(s.sales)}</td><td class="n" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</td></tr>`).join('');
+        body.innerHTML=`<div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--white);border-bottom:1px solid var(--gray-border);"><span style="font-size:11px;color:var(--text-secondary);">長期未販売:</span>${[30,60,90].map(d=>`<button class="ana-sbtn${invDays===d?' ana-sbtn-on':''}" onclick="App._anaInvDays(${d})">${d}日以上</button>`).join('')}<div style="margin-left:auto;display:flex;gap:4px;"><button class="ana-sbtn${invShowPaused?' ana-sbtn-on':''}" onclick="App._anaInvToggle('paused')">休止も表示</button><button class="ana-sbtn${invShowDiscontinued?' ana-sbtn-on':''}" onclick="App._anaInvToggle('disc')">廃番も表示</button></div></div>${ann.length===0?'<div class="ana-empty">表示する商品がありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>商品名</th><th class="n">在庫</th><th class="n">30日</th><th class="n">累計</th><th class="n">最終日</th><th class="n">売上</th><th class="n">粗利</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+
+      }else if(tab==='platform'){
+        const list=pfPeriod==='month'?fbm(completedL,pfYear,pfMonth):fby(completedL,pfYear);
+        const plbl=pfPeriod==='month'?`${pfYear}年${MO[pfMonth]}`:`${pfYear}年`;
+        const pfmap={};
+        list.forEach(l=>{const pf=l.platform||'unknown';if(!pfmap[pf])pfmap[pf]={sales:0,profit:0,count:0};pfmap[pf].sales+=Number(l.salePrice)||0;pfmap[pf].profit+=Number(l.profit)||0;pfmap[pf].count++;});
+        const sorted=Object.entries(pfmap).sort((a,b)=>b[1].sales-a[1].sales);
+        const rows=sorted.map(([pfKey,s])=>{const pf=getPlatform(pfKey);const mg=s.sales>0?(s.profit/s.sales*100).toFixed(1):'0.0';return `<tr><td><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></td><td class="n">${yen(s.sales)}</td><td class="n" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</td><td class="n">${s.count}</td><td class="n">${mg}%</td></tr>`;}).join('');
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${pfPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaPfPeriod('month')">月別</button><button class="ana-sbtn${pfPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaPfPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('p',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('p',1)">›</button></div>${sorted.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>プラットフォーム</th><th class="n">売上</th><th class="n">粗利</th><th class="n">件数</th><th class="n">利益率</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+      }
+    }
+
+    const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'inventory',l:'在庫判断'},{k:'platform',l:'PF別'}];
+    main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
+    renderContent();
+
+    App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
+    App._anaNav=(type,dir)=>{
+      if(type==='m'){mMonth+=dir;if(mMonth<0){mMonth=11;mYear--;}if(mMonth>11){mMonth=0;mYear++;}}
+      else if(type==='y')aYear+=dir;
+      else if(type==='r'){if(rkPeriod==='month'){rkMonth+=dir;if(rkMonth<0){rkMonth=11;rkYear--;}if(rkMonth>11){rkMonth=0;rkYear++;}}else rkYear+=dir;}
+      else if(type==='p'){if(pfPeriod==='month'){pfMonth+=dir;if(pfMonth<0){pfMonth=11;pfYear--;}if(pfMonth>11){pfMonth=0;pfYear++;}}else pfYear+=dir;}
+      renderContent();
+    };
+    App._anaRkSort=s=>{rkSort=s;renderContent();};
+    App._anaRkPeriod=p=>{rkPeriod=p;renderContent();};
+    App._anaPfPeriod=p=>{pfPeriod=p;renderContent();};
+    App._anaInvDays=d=>{invDays=d;renderContent();};
+    App._anaInvToggle=w=>{if(w==='paused')invShowPaused=!invShowPaused;else invShowDiscontinued=!invShowDiscontinued;renderContent();};
   }
 
   // =====================================================================
@@ -391,6 +472,8 @@ const App = (() => {
         const thumb=p.photos?.[0]?`<img src="${p.photos[0]}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;">`:`<div class="product-grid-placeholder">📦</div>`;
         const stock=p.stockCount||0;
         const stockBadge=`<div class="product-grid-stock ${stock===0?'out':stock<=2?'low':''}">${stock}</div>`;
+        const pst=p.productStatus||'active';
+        const statusOverlay=pst!=='active'?`<div style="position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700;background:${pst==='paused'?'rgba(245,124,0,0.92)':'rgba(117,117,117,0.92)'};color:#fff;">${pst==='paused'?'休止':'廃番'}</div>`:'';
         const gridLabel=esc(p.name);
         return `<div class="product-grid-item" data-id="${p.id}" draggable="true"
           style="${p.hidden?'opacity:0.45;':''}"
@@ -398,6 +481,7 @@ const App = (() => {
           oncontextmenu="App._showSortSheet();event.preventDefault();">
           ${thumb}
           ${stockBadge}
+          ${statusOverlay}
           ${p.salePrice?`<div class="product-grid-price">${yen(p.salePrice)}</div>`:''}
           <div class="product-grid-name">${gridLabel}</div>
         </div>`;
@@ -633,6 +717,7 @@ const App = (() => {
       <!-- 商品詳細 -->
       <div class="section-hd">商品詳細</div>
       <div class="detail-group">
+        <div class="detail-row"><span class="detail-label">ステータス</span><span class="detail-value"><span class="prod-status-badge prod-status-${product.productStatus||'active'}">${{active:'販売中',paused:'販売休止',discontinued:'廃番'}[product.productStatus||'active']}</span></span></div>
         ${product.code?`<div class="detail-row"><span class="detail-label">管理番号</span><span class="detail-value">${esc(product.code)}</span></div>`:''}
         ${product.sku?`<div class="detail-row"><span class="detail-label">商品タイトル</span><span class="detail-value">${esc(product.sku)}</span></div>`:''}
         ${product.salePrice?`<div class="detail-row"><span class="detail-label">販売価格</span><span class="detail-value">${yen(product.salePrice)}</span></div>`:''}
@@ -755,6 +840,13 @@ const App = (() => {
           </div>
         </div>
         <div class="form-row"><label class="form-label">管理番号</label><input class="form-input" id="f-code" type="text" placeholder="例: C-1215" value="${esc(product?.code||'')}"></div>
+        <div class="form-row"><label class="form-label">ステータス</label>
+          <select class="form-select" id="f-product-status">
+            <option value="active" ${(!product?.productStatus||product?.productStatus==='active')?'selected':''}>販売中</option>
+            <option value="paused" ${product?.productStatus==='paused'?'selected':''}>販売休止</option>
+            <option value="discontinued" ${product?.productStatus==='discontinued'?'selected':''}>廃番</option>
+          </select>
+        </div>
       </div>
       <div class="form-group">
         <div class="form-row"><label class="form-label required">仕入額</label><input class="form-input" id="f-purchasePrice" type="number" inputmode="numeric" placeholder="0" value="${product?.purchasePrice||''}"><span class="form-suffix">円</span></div>
@@ -817,6 +909,7 @@ const App = (() => {
       id:id||uid(), name,
       sku:existing?.sku||'',
       code:document.getElementById('f-code')?.value?.trim()||'',
+      productStatus:document.getElementById('f-product-status')?.value||'active',
       hidden:document.getElementById('f-hidden')?.checked||false,
       purchasePrice:Number(document.getElementById('f-purchasePrice')?.value)||0,
       salePrice:Number(document.getElementById('f-salePrice')?.value)||0,
@@ -1188,7 +1281,7 @@ const App = (() => {
 
     // 状態変数
     let filterStatus=_salesFilterStatus, sortMode='date', searchQ='';
-    let viewMode='list';
+    let viewMode=_salesViewMode;
     let itemMode=_salesItemMode;    // モジュール変数から復元（画面移動後も維持）
     let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
     let calDateBasis='saleDate', calSelectedDate=null;
@@ -1615,7 +1708,7 @@ const App = (() => {
       document.body.appendChild(ov);
       ov.addEventListener('click',e=>{
         const btn=e.target.closest('.status-popup-item');
-        if(btn){filterStatus=btn.dataset.key;_salesFilterStatus=filterStatus;setFilterLabel();renderList();}
+        if(btn){filterStatus=btn.dataset.key;_salesFilterStatus=filterStatus;db.put('settings',{key:'salesFilterStatus',value:_salesFilterStatus});setFilterLabel();renderList();}
         ov.remove();
       });
     });
@@ -1675,16 +1768,25 @@ const App = (() => {
           <button data-mode="simple" class="btn ${itemMode==='simple'?'btn-primary':'btn-gray'} btn-full" style="font-size:14px;">シンプル</button>
           <button data-mode="detail" class="btn ${itemMode==='detail'?'btn-primary':'btn-gray'} btn-full" style="font-size:14px;">詳細</button>
         </div>
-        <button id="__sheet-csv-btn" class="btn btn-outline-red btn-full" style="margin-bottom:8px;">📊 CSV出力</button>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">CSV出力</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+          <button id="__sheet-csv-cur" class="btn btn-outline-red btn-full" style="font-size:13px;">📊 現在の表示でCSV</button>
+          <button id="__sheet-csv-month" class="btn btn-outline-red btn-full" style="font-size:13px;">📊 月別CSV出力</button>
+          <button id="__sheet-csv-year" class="btn btn-outline-red btn-full" style="font-size:13px;">📊 年別CSV出力</button>
+          <button id="__sheet-csv-custom" class="btn btn-outline-red btn-full" style="font-size:13px;">📊 期間指定CSV出力</button>
+        </div>
         <button class="btn btn-gray btn-full" onclick="this.closest('.status-popup-overlay').remove()">閉じる</button>
       </div>`;
       document.body.appendChild(ov);
       ov.addEventListener('click',e=>{
         const modeBtn=e.target.closest('[data-mode]');
-        if(modeBtn){itemMode=modeBtn.dataset.mode;_salesItemMode=itemMode;ov.remove();renderList();return;}
+        if(modeBtn){itemMode=modeBtn.dataset.mode;_salesItemMode=itemMode;db.put('settings',{key:'salesItemMode',value:_salesItemMode});ov.remove();renderList();return;}
         if(e.target===ov)ov.remove();
       });
-      ov.querySelector('#__sheet-csv-btn').onclick=()=>{App._exportSalesCSV(filtered());ov.remove();};
+      ov.querySelector('#__sheet-csv-cur').onclick=()=>{App._exportSalesCSV(filtered());ov.remove();};
+      ov.querySelector('#__sheet-csv-month').onclick=()=>{ov.remove();App._csvByPeriod('month');};
+      ov.querySelector('#__sheet-csv-year').onclick=()=>{ov.remove();App._csvByPeriod('year');};
+      ov.querySelector('#__sheet-csv-custom').onclick=()=>{ov.remove();App._csvByPeriod('custom');};
     };
 
     App._toggleSel=()=>{};
@@ -1708,7 +1810,8 @@ const App = (() => {
     };
 
     App._salesSetView=mode=>{
-      viewMode=mode;
+      viewMode=mode;_salesViewMode=mode;
+      db.put('settings',{key:'salesViewMode',value:mode});
       document.getElementById('__view-list-btn')?.classList.toggle('active',mode==='list');
       document.getElementById('__view-cal-btn')?.classList.toggle('active',mode==='calendar');
       const ctrl=document.getElementById('__sales-list-controls');
@@ -2123,6 +2226,102 @@ const App = (() => {
   // =====================================================================
   // SETTINGS
   // =====================================================================
+  // =====================================================================
+  // JAN CODE SETTINGS
+  // =====================================================================
+  async function pgJanSettings(main, actionBtn) {
+    let sortDir = 'asc';
+
+    actionBtn.className = 'header-btn pill-btn';
+    actionBtn.textContent = '＋追加';
+    actionBtn.onclick = () => showAddDialog();
+
+    function renderList() {
+      const sorted = [...JAN_CODES].sort((a, b) => {
+        const cmp = (a.number || '').localeCompare(b.number || '', undefined, {numeric: true, sensitivity: 'base'});
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+      main.innerHTML = `<div class="page-pad" style="background:var(--gray-light);">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0 12px;">
+          <span style="font-size:13px;color:var(--text-secondary);">${JAN_CODES.length}件</span>
+          <button id="__jan-sort-btn" class="grid-sort-btn">番号 ${sortDir === 'asc' ? '↑ 昇順' : '↓ 降順'}</button>
+        </div>
+        ${sorted.length === 0
+          ? '<div style="text-align:center;padding:40px 0;color:var(--text-secondary);font-size:14px;">JANコードがありません<br><span style="font-size:12px;">右上の＋追加ボタンで追加できます</span></div>'
+          : `<div style="background:var(--white);border-radius:8px;overflow:hidden;">${sorted.map((item, i) => `
+            <div style="display:flex;align-items:center;padding:12px 14px;${i > 0 ? 'border-top:1px solid var(--gray-border);' : ''}gap:12px;">
+              ${item.photo
+                ? `<img src="${item.photo}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;">`
+                : '<div style="width:52px;height:52px;border-radius:6px;background:var(--gray-light);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;">🏷</div>'}
+              <div style="flex:1;font-size:15px;font-weight:500;font-family:monospace;word-break:break-all;">${esc(item.number)}</div>
+              <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:22px;padding:4px 10px;cursor:pointer;flex-shrink:0;">✕</button>
+            </div>`).join('')}</div>`
+        }
+      </div>`;
+      document.getElementById('__jan-sort-btn')?.addEventListener('click', () => {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        renderList();
+      });
+    }
+
+    renderList();
+
+    App._deleteJanCode = async id => {
+      const ok = await confirmDialog('このJANコードを削除しますか？', '削除', 'btn-danger');
+      if (!ok) return;
+      JAN_CODES = JAN_CODES.filter(j => j.id !== id);
+      await db.put('settings', {key: 'janCodes', value: JAN_CODES});
+      toast('削除しました');
+      renderList();
+    };
+
+    function showAddDialog() {
+      const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
+      ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
+        <h3 style="margin-bottom:16px;">JANコードを追加</h3>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">番号</div>
+          <input id="__jan-num-input" type="tel" placeholder="例: 4901234567890" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:20px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">写真（任意）</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:var(--gray-light);border:1px dashed var(--gray-border);border-radius:8px;padding:10px 16px;font-size:13px;color:var(--text-secondary);">
+              📷 写真を選択
+              <input type="file" accept="image/*" id="__jan-photo-input" style="display:none;">
+            </label>
+            <div id="__jan-photo-thumb"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="__jan-cancel-btn" class="btn btn-gray btn-full">キャンセル</button>
+          <button id="__jan-save-btn" class="btn btn-primary btn-full">保存</button>
+        </div>
+      </div>`;
+      document.body.appendChild(ov);
+
+      let photoData = null;
+
+      document.getElementById('__jan-photo-input').addEventListener('change', async e => {
+        const f = e.target.files[0]; if (!f) return;
+        const b64 = await fileToBase64(f);
+        photoData = await resizeImage(b64, 400, 400);
+        document.getElementById('__jan-photo-thumb').innerHTML = `<img src="${photoData}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;">`;
+      });
+
+      document.getElementById('__jan-save-btn').onclick = async () => {
+        const num = document.getElementById('__jan-num-input').value.trim();
+        if (!num) { toast('番号を入力してください'); return; }
+        JAN_CODES.push({id: uid(), number: num, photo: photoData, createdAt: Date.now()});
+        await db.put('settings', {key: 'janCodes', value: JAN_CODES});
+        toast('追加しました'); ov.remove(); renderList();
+      };
+      document.getElementById('__jan-cancel-btn').onclick = () => ov.remove();
+      ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+      setTimeout(() => document.getElementById('__jan-num-input')?.focus(), 100);
+    }
+  }
+
   async function pgSettings(main){
     const products=await db.getAll('products'),listings=await db.getAll('listings');
     main.innerHTML=`
@@ -2134,9 +2333,14 @@ const App = (() => {
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">プラットフォームを管理</div><div style="font-size:12px;color:var(--text-secondary);">追加・色変更・手数料変更（現在${PLATFORMS.length}件）</div></div>
           <span style="color:#BDBDBD;font-size:18px;">›</span>
         </div>
-        <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer;" onclick="App.navigate('shipping-settings',{},'送料プリセット管理')">
+        <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--gray-border);gap:12px;cursor:pointer;" onclick="App.navigate('shipping-settings',{},'送料プリセット管理')">
           <span style="font-size:22px;">✉️</span>
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">送料プリセットを管理</div><div style="font-size:12px;color:var(--text-secondary);">送料ショートカットの追加・編集（現在${SHIPPING_SHORTCUTS.length}件）</div></div>
+          <span style="color:#BDBDBD;font-size:18px;">›</span>
+        </div>
+        <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer;" onclick="App.navigate('jan-settings',{},'JANコード管理')">
+          <span style="font-size:22px;">🏷</span>
+          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">JANコードを管理</div><div style="font-size:12px;color:var(--text-secondary);">写真・番号の保存（現在${JAN_CODES.length}件）</div></div>
           <span style="color:#BDBDBD;font-size:18px;">›</span>
         </div>
       </div>
@@ -2386,7 +2590,7 @@ const App = (() => {
 
   async function _export(){
     const products=await db.getAll('products'),listings=await db.getAll('listings');
-    const data={version:2,exportedAt:new Date().toISOString(),products,listings,platforms:PLATFORMS,shippingShortcuts:SHIPPING_SHORTCUTS};
+    const data={version:2,exportedAt:new Date().toISOString(),products,listings,platforms:PLATFORMS,shippingShortcuts:SHIPPING_SHORTCUTS,janCodes:JAN_CODES};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download=`seller-note-${todayStr()}.json`;a.click();
@@ -2407,6 +2611,58 @@ const App = (() => {
     const a=document.createElement('a');a.href=url;a.download=`sales-${todayStr()}.csv`;a.click();
     URL.revokeObjectURL(url);toast(`✅ ${listings.length}件をCSV出力しました`);
   }
+  function _exportListingsCSV(list,periodLabel){
+    const SL={before:'出品前',listing:'出品中',payment:'入金待ち',shipping:'発送準備中',review:'評価待ち',completed:'取引完了',canceled:'キャンセル'};
+    const rows=[['売上日','取引完了日','商品名','SKU/管理番号','プラットフォーム','売上金額','送料','手数料','仕入額','梱包費','経費','粗利','取引状態']];
+    list.forEach(l=>{
+      const completedDate=l.status==='completed'&&l.updatedAt?new Date(l.updatedAt).toISOString().slice(0,10):'';
+      rows.push([l.saleDate||'',completedDate,l.productName||'',l.productCode||l.productTitle||'',getPlatform(l.platform).name,l.salePrice||0,l.shipping||0,l.fee||0,l.purchasePrice||0,0,0,l.profit||0,SL[l.status]||l.status||'']);
+    });
+    const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+    const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=`sales-${periodLabel}.csv`;a.click();
+    URL.revokeObjectURL(url);toast(`✅ ${list.length}件をCSV出力しました`);
+  }
+  async function _csvByPeriod(type){
+    const allL=await db.getAll('listings');
+    const now=new Date();
+    const sheet=document.createElement('div');sheet.className='status-popup-overlay';sheet.style.alignItems='flex-end';
+    if(type==='month'){
+      const defVal=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      sheet.innerHTML=`<div class="outbound-sheet" style="padding-bottom:24px;"><h3 style="margin-bottom:16px;">月別CSV出力</h3><div style="margin-bottom:20px;"><input type="month" id="__csv-m" class="form-input" value="${defVal}" style="width:100%;box-sizing:border-box;"></div><div style="display:flex;gap:8px;"><button class="btn btn-gray btn-full" onclick="this.closest('.status-popup-overlay').remove()">キャンセル</button><button id="__csv-ok" class="btn btn-primary btn-full">出力</button></div></div>`;
+      document.body.appendChild(sheet);
+      sheet.addEventListener('click',e=>{if(e.target===sheet)sheet.remove();});
+      sheet.querySelector('#__csv-ok').onclick=()=>{
+        const val=sheet.querySelector('#__csv-m').value;if(!val)return;
+        const[y,m]=val.split('-').map(Number);
+        const fl=allL.filter(l=>{const d=new Date(l.saleDate||l.createdAt);return d.getFullYear()===y&&d.getMonth()===m-1;});
+        _exportListingsCSV(fl,`${y}年${m}月`);sheet.remove();
+      };
+    }else if(type==='year'){
+      const opts=Array.from({length:5},(_,i)=>now.getFullYear()-i).map(y=>`<option value="${y}">${y}年</option>`).join('');
+      sheet.innerHTML=`<div class="outbound-sheet" style="padding-bottom:24px;"><h3 style="margin-bottom:16px;">年別CSV出力</h3><div style="margin-bottom:20px;"><select id="__csv-y" class="form-select" style="width:100%;">${opts}</select></div><div style="display:flex;gap:8px;"><button class="btn btn-gray btn-full" onclick="this.closest('.status-popup-overlay').remove()">キャンセル</button><button id="__csv-ok" class="btn btn-primary btn-full">出力</button></div></div>`;
+      document.body.appendChild(sheet);
+      sheet.addEventListener('click',e=>{if(e.target===sheet)sheet.remove();});
+      sheet.querySelector('#__csv-ok').onclick=()=>{
+        const y=Number(sheet.querySelector('#__csv-y').value);
+        const fl=allL.filter(l=>new Date(l.saleDate||l.createdAt).getFullYear()===y);
+        _exportListingsCSV(fl,`${y}年`);sheet.remove();
+      };
+    }else{
+      const firstDay=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+      sheet.innerHTML=`<div class="outbound-sheet" style="padding-bottom:24px;"><h3 style="margin-bottom:16px;">期間指定CSV出力</h3><div style="display:flex;gap:8px;align-items:center;margin-bottom:20px;"><input type="date" id="__csv-f" class="form-input" style="flex:1;" value="${firstDay}"><span>〜</span><input type="date" id="__csv-t" class="form-input" style="flex:1;" value="${todayStr()}"></div><div style="display:flex;gap:8px;"><button class="btn btn-gray btn-full" onclick="this.closest('.status-popup-overlay').remove()">キャンセル</button><button id="__csv-ok" class="btn btn-primary btn-full">出力</button></div></div>`;
+      document.body.appendChild(sheet);
+      sheet.addEventListener('click',e=>{if(e.target===sheet)sheet.remove();});
+      sheet.querySelector('#__csv-ok').onclick=()=>{
+        const from=sheet.querySelector('#__csv-f').value,to=sheet.querySelector('#__csv-t').value;
+        if(!from||!to){toast('期間を選択してください');return;}
+        const fromMs=new Date(from).getTime(),toMs=new Date(to).getTime()+86400000-1;
+        const fl=allL.filter(l=>{const ms=new Date(l.saleDate||l.createdAt).getTime();return ms>=fromMs&&ms<=toMs;});
+        _exportListingsCSV(fl,`${from}〜${to}`);sheet.remove();
+      };
+    }
+  }
   function _import(){document.getElementById('__import-file')?.click();}
   async function _onImport(input){
     const file=input.files?.[0];if(!file)return;
@@ -2418,6 +2674,7 @@ const App = (() => {
       for(const l of(data.listings||data.sales||[]))await db.put('listings',l);
       if(data.platforms){PLATFORMS=data.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
       if(data.shippingShortcuts&&data.shippingShortcuts.length){SHIPPING_SHORTCUTS=data.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
+      if(data.janCodes&&data.janCodes.length){JAN_CODES=data.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
       toast('インポートしました');await _render('settings',{},'設定');
     }catch(e){toast('インポート失敗: '+e.message);}
   }
@@ -2446,6 +2703,16 @@ const App = (() => {
     // DBから送料プリセットを読み込む
     const savedShipping=await db.get('settings','shippingShortcuts');
     if(savedShipping?.value&&savedShipping.value.length) SHIPPING_SHORTCUTS=savedShipping.value;
+    // DBから売上管理表の設定を読み込む
+    const savedItemMode=await db.get('settings','salesItemMode');
+    if(savedItemMode?.value) _salesItemMode=savedItemMode.value;
+    const savedFilterStatus=await db.get('settings','salesFilterStatus');
+    if(savedFilterStatus?.value) _salesFilterStatus=savedFilterStatus.value;
+    const savedViewMode=await db.get('settings','salesViewMode');
+    if(savedViewMode?.value) _salesViewMode=savedViewMode.value;
+    // DBからJANコードを読み込む
+    const savedJan=await db.get('settings','janCodes');
+    if(savedJan?.value) JAN_CODES=savedJan.value;
     await switchTab('home');
   }
 
@@ -2470,6 +2737,10 @@ const App = (() => {
     _calNav:()=>{}, _calToday:()=>{}, _calSelect:()=>{}, _calBasisSheet:()=>{},
     _dupSale:()=>{}, _editSaleMemo:()=>{}, _showSaleActions:()=>{},
     _obSelShipping:()=>{},
+    _deleteJanCode:()=>{},
+    _anaTab:()=>{}, _anaNav:()=>{}, _anaRkSort:()=>{}, _anaRkPeriod:()=>{},
+    _anaPfPeriod:()=>{}, _anaInvDays:()=>{}, _anaInvToggle:()=>{},
+    _exportListingsCSV, _csvByPeriod,
     _editShipping:()=>{}, _resetShipping:async()=>{
       const ok=await confirmDialog('送料プリセットをデフォルトに戻しますか？');if(!ok)return;
       SHIPPING_SHORTCUTS=[...DEFAULT_SHIPPING_SHORTCUTS];
