@@ -65,10 +65,14 @@ class DB {
     const fd = new FormData();
     fd.append('file', b64);
     fd.append('api_key', _CLD.key);
-    fd.append('timestamp', ts);
+    fd.append('timestamp', String(ts));
     fd.append('signature', sig);
     const res = await fetch(`https://api.cloudinary.com/v1_1/${_CLD.cloud}/image/upload`, { method:'POST', body:fd });
-    if (!res.ok) throw new Error('Cloudinary upload failed: ' + res.status);
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = j.error?.message || JSON.stringify(j); } catch {}
+      throw new Error(`Cloudinary ${res.status}: ${detail}`);
+    }
     const json = await res.json();
     return json.secure_url;
   }
@@ -916,10 +920,10 @@ const App = (() => {
       let html='';
       for(let i=0;i<10;i++){
         if(_currentPhotos[i]){
-          html+=`<div class="photo-cell" onclick="App._removePhoto(${i})">
-            <img src="${_currentPhotos[i]}" alt="" style="width:100%;height:100%;object-fit:cover;">
-            <div class="photo-del">×</div>
-            <div style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;color:white;background:rgba(0,0,0,0.4);">${i+1}</div>
+          html+=`<div class="photo-cell" data-idx="${i}">
+            <img src="${_currentPhotos[i]}" alt="" style="width:100%;height:100%;object-fit:cover;pointer-events:none;">
+            <button class="photo-del" onclick="App._removePhoto(${i})" style="pointer-events:auto;">×</button>
+            <div style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;color:white;background:rgba(0,0,0,0.4);pointer-events:none;">${i+1}</div>
           </div>`;
         } else {
           html+=`<div class="photo-cell" style="opacity:0.2;"><span style="font-size:16px;">📷</span><div style="font-size:9px;color:#999;">${i+1}</div></div>`;
@@ -928,6 +932,67 @@ const App = (() => {
       grid.innerHTML=html;
       const hd=document.getElementById('__photo-hd');
       if(hd) hd.textContent=`写真（最大10枚 · ${_currentPhotos.length}枚登録済み）`;
+
+      // タッチで長押し→ドラッグ並び替え
+      let touchSrcIdx=null, touchClone=null, touchTimer=null;
+      grid.querySelectorAll('.photo-cell[data-idx]').forEach(cell=>{
+        const idx=parseInt(cell.dataset.idx);
+        cell.addEventListener('touchstart',e=>{
+          if(e.target.classList.contains('photo-del'))return;
+          touchTimer=setTimeout(()=>{
+            touchSrcIdx=idx;
+            if(navigator.vibrate)navigator.vibrate(40);
+            const rect=cell.getBoundingClientRect();
+            touchClone=cell.cloneNode(true);
+            Object.assign(touchClone.style,{
+              position:'fixed',width:rect.width+'px',height:rect.height+'px',
+              top:rect.top+'px',left:rect.left+'px',
+              opacity:'0.85',border:'2px solid var(--primary)',borderRadius:'8px',
+              zIndex:'9999',pointerEvents:'none',transform:'scale(1.08)',
+              boxShadow:'0 8px 24px rgba(0,0,0,0.3)',
+            });
+            document.body.appendChild(touchClone);
+            cell.style.opacity='0.3';
+          },400);
+        },{passive:true});
+        cell.addEventListener('touchmove',e=>{
+          if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
+          if(touchSrcIdx===null||!touchClone)return;
+          e.preventDefault();
+          const t=e.touches[0];
+          const tw=parseFloat(touchClone.style.width),th=parseFloat(touchClone.style.height);
+          touchClone.style.left=(t.clientX-tw/2)+'px';
+          touchClone.style.top=(t.clientY-th/2)+'px';
+          touchClone.style.display='none';
+          const el=document.elementFromPoint(t.clientX,t.clientY);
+          touchClone.style.display='';
+          grid.querySelectorAll('.photo-cell[data-idx]').forEach(c=>c.classList.remove('drag-over'));
+          const over=el?.closest('.photo-cell[data-idx]');
+          if(over&&parseInt(over.dataset.idx)!==touchSrcIdx)over.classList.add('drag-over');
+        },{passive:false});
+        const endTouch=e=>{
+          if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
+          if(touchClone){touchClone.remove();touchClone=null;}
+          grid.querySelectorAll('.photo-cell[data-idx]').forEach(c=>{c.classList.remove('drag-over');c.style.opacity='';});
+          if(touchSrcIdx!==null&&e.changedTouches){
+            const t=e.changedTouches[0];
+            touchClone&&touchClone.remove();
+            const el=document.elementFromPoint(t.clientX,t.clientY);
+            const over=el?.closest('.photo-cell[data-idx]');
+            if(over){
+              const destIdx=parseInt(over.dataset.idx);
+              if(destIdx!==touchSrcIdx){
+                const moved=_currentPhotos.splice(touchSrcIdx,1)[0];
+                _currentPhotos.splice(destIdx,0,moved);
+                renderPhotoGrid();
+              }
+            }
+          }
+          touchSrcIdx=null;
+        };
+        cell.addEventListener('touchend',endTouch,{passive:true});
+        cell.addEventListener('touchcancel',endTouch,{passive:true});
+      });
     }
     _renderPhotoGrid=renderPhotoGrid;
 
