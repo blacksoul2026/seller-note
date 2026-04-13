@@ -1,141 +1,49 @@
 'use strict';
 
 // =====================================================================
-// CLOUDINARY CONFIG
-// =====================================================================
-const _CLD = {
-  cloud:  'dpbyfsaiq',
-  preset: 'seller_note', // Cloudinaryダッシュボードで作成したunsigned preset名
-};
-
-// =====================================================================
-// DATABASE（Firestore版 + ローカル写真キャッシュ）
+// DATABASE（Firestore版 - 写真はサブコレクションに保存）
 // =====================================================================
 class DB {
-  constructor() { this.userId = null; this._ph = null; }
+  constructor() { this.userId = null; }
 
   async open() {
     this.userId = window._currentUser.uid;
-    // 写真だけローカルIndexedDBに保存（base64はFirestoreの1MB制限に引っかかるため）
-    this._ph = await new Promise((res, rej) => {
-      const r = indexedDB.open('seller_note_photos', 1);
-      r.onupgradeneeded = e => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains('ph')) d.createObjectStore('ph', { keyPath: 'k' });
-      };
-      r.onsuccess = e => res(e.target.result);
-      r.onerror = rej;
-    });
     return this;
   }
 
   _col(name) { return window._fs.collection(window._firestore, 'users', this.userId, name); }
   _doc(name, id) { return window._fs.doc(window._firestore, 'users', this.userId, name, String(id)); }
 
-  _phGet(k) {
-    return new Promise((r, j) => {
-      const q = this._ph.transaction('ph').objectStore('ph').get(k);
-      q.onsuccess = () => r(q.result?.d ?? null); q.onerror = j;
-    });
-  }
-  _phPut(k, d) {
-    return new Promise((r, j) => {
-      const q = this._ph.transaction('ph', 'readwrite').objectStore('ph').put({ k, d });
-      q.onsuccess = () => r(); q.onerror = j;
-    });
-  }
-  _phDel(k) {
-    return new Promise((r, j) => {
-      const q = this._ph.transaction('ph', 'readwrite').objectStore('ph').delete(k);
-      q.onsuccess = () => r(); q.onerror = j;
-    });
-  }
-
-  // base64 → Cloudinary → secure_url。既にURLなら何もしない
-  async _uploadToCloudinary(b64) {
-    if (!b64 || !b64.startsWith('data:')) return b64;
-    // base64をBlobに変換してアップロード（iOSで確実に動く方式）
-    const blob = await fetch(b64).then(r => r.blob());
-    const fd = new FormData();
-    fd.append('file', blob, 'photo.jpg');
-    fd.append('upload_preset', _CLD.preset);
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${_CLD.cloud}/image/upload`, { method:'POST', body:fd });
-    if (!res.ok) {
-      let detail = '';
-      try { const j = await res.json(); detail = j.error?.message || JSON.stringify(j); } catch {}
-      throw new Error(`Cloudinary ${res.status}: ${detail}`);
-    }
-    const json = await res.json();
-    return json.secure_url;
-  }
-
-  async _merge(item, store) {
-    if (store === 'products') {
-      // Firestoreに写真URLが入っていればそれを使う、なければローカルIndexedDB
-      const fsPhotos = item.photos;
-      if (fsPhotos && fsPhotos.length > 0) return item;
-      return { ...item, photos: (await this._phGet('p:' + item.id)) || [] };
-    }
-    if (store === 'listings') {
-      const fsPhoto = item.photo;
-      if (fsPhoto && fsPhoto.startsWith('http')) return item;
-      return { ...item, photo: (await this._phGet('l:' + item.id)) || '' };
-    }
-    return item;
-  }
-
+  // 写真は商品ドキュメントに直接保存（480px圧縮済みなので1MB以内に収まる）
   async getAll(store) {
     const { getDocs } = window._fs;
     const snap = await getDocs(this._col(store));
-    const items = snap.docs.map(d => d.data());
-    if (store === 'products' || store === 'listings') return Promise.all(items.map(i => this._merge(i, store)));
-    return items;
+    return snap.docs.map(d => d.data());
   }
 
   async get(store, id) {
     const { getDoc } = window._fs;
     const snap = await getDoc(this._doc(store, id));
     if (!snap.exists()) return undefined;
-    return this._merge(snap.data(), store);
+    return snap.data();
   }
 
   async put(store, data) {
     const { setDoc } = window._fs;
-    const save = { ...data };
-    if (store === 'products') {
-      const uploaded = [];
-      for (const ph of (save.photos || [])) {
-        if (!ph || !ph.startsWith('data:')) { uploaded.push(ph); continue; }
-        const url = await this._uploadToCloudinary(ph); // エラーは上位に投げる
-        uploaded.push(url);
-      }
-      save.photos = uploaded;
-      await this._phPut('p:' + data.id, []);
-    }
-    if (store === 'listings') {
-      if (save.photo && save.photo.startsWith('data:')) {
-        save.photo = await this._uploadToCloudinary(save.photo);
-      }
-      await this._phPut('l:' + data.id, '');
-    }
     const docId = store === 'settings' ? data.key : data.id;
-    await setDoc(this._doc(store, String(docId)), save);
+    await setDoc(this._doc(store, String(docId)), data);
   }
 
   async delete(store, id) {
     const { deleteDoc } = window._fs;
     await deleteDoc(this._doc(store, String(id)));
-    if (store === 'products') await this._phDel('p:' + id);
-    if (store === 'listings') await this._phDel('l:' + id);
   }
 
   async getAllByIndex(store, field, value) {
     const { query: fsQ, where: fsW, getDocs } = window._fs;
     const q = fsQ(this._col(store), fsW(field, '==', value));
     const snap = await getDocs(q);
-    const items = snap.docs.map(d => d.data());
-    if (store === 'listings') return Promise.all(items.map(i => this._merge(i, store)));
-    return items;
+    return snap.docs.map(d => d.data());
   }
 }
 
@@ -283,14 +191,14 @@ function confirmDialog(msg,okLabel='削除',okClass='btn-danger') {
 async function fileToBase64(f) {
   return new Promise((r,j)=>{const rd=new FileReader();rd.onload=e=>r(e.target.result);rd.onerror=j;rd.readAsDataURL(f);});
 }
-function resizeImage(b64,maxW=900,maxH=900) {
+function resizeImage(b64,maxW=480,maxH=480) {
   return new Promise(r=>{
     const img=new Image();
     img.onload=()=>{
       let w=img.width,h=img.height;
       if(w>maxW||h>maxH){const ratio=Math.min(maxW/w,maxH/h);w=Math.floor(w*ratio);h=Math.floor(h*ratio);}
       const c=document.createElement('canvas');c.width=w;c.height=h;
-      c.getContext('2d').drawImage(img,0,0,w,h);r(c.toDataURL('image/jpeg',0.82));
+      c.getContext('2d').drawImage(img,0,0,w,h);r(c.toDataURL('image/jpeg',0.70));
     };img.src=b64;
   });
 }
@@ -326,7 +234,7 @@ const App = (() => {
   let _salesViewMode = 'list';       // 売上管理表のビューモードを永続化
   let JAN_CODES = [];                // JANコードリスト
 
-  const TAB_TITLES = {home:'分析',sales:'売上管理表',products:'商品マスタ',inventory:'同期',settings:'設定'};
+  const TAB_TITLES = {home:'分析',sales:'売上管理表',products:'商品マスタ',settings:'設定'};
 
   // ===== ROUTER =====
   async function switchTab(tab) {
@@ -380,7 +288,6 @@ const App = (() => {
         _setupSaveBtn(actionBtn,()=>document.getElementById('__save-sale')?.click());
         await pgSaleForm(main,params); break;
       case 'sale-detail': await pgSaleDetail(main,params); break;
-      case 'inventory':  await pgInventory(main); break;
       case 'settings':   await pgSettings(main); break;
       case 'platform-settings': await pgPlatformSettings(main,actionBtn); break;
       case 'shipping-settings': await pgShippingSettings(main,actionBtn); break;
@@ -2419,288 +2326,6 @@ const App = (() => {
   }
 
   // =====================================================================
-  // INVENTORY
-  // =====================================================================
-  // =====================================================================
-  // SYNC TAB
-  // =====================================================================
-  async function pgInventory(main){
-    const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
-    const [devRec,lastRec,logsRec,pfRec,shRec,janRec]=await Promise.all([
-      db.get('settings','syncDeviceId'),
-      db.get('settings','syncLastTime'),
-      db.get('settings','syncLogs'),
-      db.get('settings','platforms'),
-      db.get('settings','shippingShortcuts'),
-      db.get('settings','janCodes'),
-    ]);
-
-    // デバイスID生成（初回のみ）
-    let deviceId=devRec?.value;
-    if(!deviceId){
-      deviceId='DEV-'+Math.random().toString(36).slice(2,6).toUpperCase()+'-'+Math.random().toString(36).slice(2,6).toUpperCase();
-      await db.put('settings',{key:'syncDeviceId',value:deviceId});
-    }
-
-    const lastSyncTime=lastRec?.value||0;
-    const syncLogs=logsRec?.value||[];
-
-    // 未同期件数
-    const ts=p=>(p.updatedAt||p.createdAt||0);
-    const pendingProds=products.filter(p=>ts(p)>lastSyncTime).length;
-    const pendingList=listings.filter(l=>ts(l)>lastSyncTime).length;
-    const totalImages=products.reduce((a,p)=>a+(p.photos?.length||0),0);
-    const pendingImages=products.filter(p=>ts(p)>lastSyncTime).reduce((a,p)=>a+(p.photos?.length||0),0);
-    const customCount=(pfRec?.value?.length||0)+(shRec?.value?.length||0)+(janRec?.value?.length||0);
-    const lastSyncLabel=lastSyncTime?new Date(lastSyncTime).toLocaleString('ja-JP'):'まだ同期していません';
-    const totalPending=pendingProds+pendingList;
-
-    function rowHtml(label,count,unit,pending,pendingUnit){
-      const pHtml=pending>0?`<span style="color:#F57C00;font-weight:700;">${pending}${pendingUnit}</span>`:`<span style="color:var(--text-secondary);">−</span>`;
-      return `<tr style="border-top:1px solid var(--gray-border);">
-        <td style="padding:11px 16px;font-size:14px;">${label}</td>
-        <td style="padding:11px 12px;text-align:right;font-size:14px;font-weight:600;">${count}${unit}</td>
-        <td style="padding:11px 16px 11px 4px;text-align:right;font-size:13px;">${pHtml}</td>
-      </tr>`;
-    }
-
-    main.innerHTML=`
-    <div style="background:var(--gray-light);min-height:100%;">
-
-      <!-- デバイス情報 -->
-      <div style="background:var(--white);padding:14px 16px;border-bottom:1px solid var(--gray-border);">
-        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">このデバイスのID</div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-          <span style="font-family:monospace;font-size:16px;font-weight:700;letter-spacing:2px;">${deviceId}</span>
-          <button onclick="App._copyText('${deviceId}','デバイスIDをコピーしました')" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;flex-shrink:0;padding:4px 8px;">📋 コピー</button>
-        </div>
-        <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">最終同期: ${lastSyncLabel}</div>
-      </div>
-
-      <!-- データ概要 -->
-      <div class="section-hd" style="margin-top:10px;">データ概要</div>
-      <div style="background:var(--white);">
-        <table style="width:100%;border-collapse:collapse;">
-          <thead><tr style="background:var(--gray-light);">
-            <th style="padding:8px 16px;text-align:left;font-size:11px;color:var(--text-secondary);font-weight:600;">項目</th>
-            <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--text-secondary);font-weight:600;">件数</th>
-            <th style="padding:8px 16px 8px 4px;text-align:right;font-size:11px;color:var(--text-secondary);font-weight:600;">未同期</th>
-          </tr></thead>
-          <tbody>
-            ${rowHtml('商品マスタ',products.length,'件',pendingProds,'件')}
-            ${rowHtml('売上データ',listings.length,'件',pendingList,'件')}
-            ${rowHtml('カスタム設定',customCount,'件',0,'')}
-            ${rowHtml('画像データ',totalImages,'枚',pendingImages,'枚')}
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 同期操作 -->
-      <div class="section-hd" style="margin-top:10px;">同期操作</div>
-      <div style="background:var(--white);padding:14px 16px;">
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <button class="btn btn-primary btn-full" onclick="App._syncExport('delta')" ${totalPending===0?'style="opacity:0.6;"':''}>
-            📤 更新データを同期${totalPending>0?` (${totalPending}件)`:''}
-          </button>
-          <button class="btn btn-outline-red btn-full" onclick="App._syncExport('full')">
-            📤 全データを同期 (${products.length+listings.length}件)
-          </button>
-          <div style="height:1px;background:var(--gray-border);"></div>
-          <button class="btn btn-gray btn-full" onclick="App._syncImport()">📥 同期ファイルを適用する</button>
-          <input type="file" id="__sync-file-input" accept=".json" style="display:none;" onchange="App._syncApply(this)">
-        </div>
-      </div>
-
-      <!-- 使い方 -->
-      <div class="section-hd" style="margin-top:10px;">使い方・注意事項</div>
-      <div style="background:var(--white);padding:14px 16px;font-size:13px;line-height:1.75;">
-        <div style="font-weight:600;margin-bottom:8px;font-size:14px;">複数端末で同じデータを見る手順</div>
-        <div style="color:var(--text-secondary);">① 端末Aで「📤 同期」ボタンを押してファイルを保存</div>
-        <div style="color:var(--text-secondary);">② ファイルを端末Bに転送 <span style="font-size:11px;">（AirDrop / Drive / メール / USB 等）</span></div>
-        <div style="color:var(--text-secondary);">③ 端末Bで「📥 同期ファイルを適用する」を選択</div>
-        <div style="margin-top:10px;padding:9px 12px;background:#FFF8E1;border-radius:6px;border-left:3px solid #F9A825;">
-          <div style="font-size:12px;color:#5D4037;line-height:1.6;">
-            <strong>画像を含む場合</strong>はファイルが大きくなります。Wi-Fi 環境での転送を推奨します。<br>
-            同じIDの商品・売上は、更新日時が新しい方が優先されます（上書き）。<br>
-            <strong>自動同期</strong>はサーバー接続が必要なため、現在は手動同期のみ対応しています。
-          </div>
-        </div>
-      </div>
-
-      <!-- 同期ログ -->
-      <div class="section-hd" style="margin-top:10px;">同期ログ</div>
-      <div style="background:var(--white);">
-        ${syncLogs.length===0
-          ?'<div style="padding:24px;text-align:center;font-size:13px;color:var(--text-secondary);">同期履歴がありません</div>'
-          :syncLogs.slice().reverse().slice(0,30).map(log=>{
-            const icon=log.status==='ok'?'📤':log.status==='import'?'📥':log.status==='error'?'❌':'ℹ️';
-            const timeLabel=new Date(log.time).toLocaleString('ja-JP');
-            return `<div style="padding:10px 16px;border-bottom:1px solid var(--gray-border);display:flex;gap:10px;align-items:flex-start;">
-              <span style="font-size:16px;flex-shrink:0;margin-top:1px;">${icon}</span>
-              <div style="flex:1;min-width:0;">
-                <div style="font-size:13px;font-weight:500;">${esc(log.label)}</div>
-                <div style="font-size:11px;color:var(--text-secondary);">${timeLabel}</div>
-                ${log.detail?`<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">${esc(log.detail)}</div>`:''}
-              </div>
-            </div>`;
-          }).join('')}
-      </div>
-      ${syncLogs.length>0?`<div style="padding:14px 16px;"><button class="btn btn-gray btn-full" onclick="App._syncClearLogs()">ログをクリア</button></div>`:''}
-
-      <div style="height:80px;"></div>
-    </div>`;
-  }
-
-  async function _syncExport(type){
-    const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
-    const [devRec,lastRec,pfRec,shRec,janRec,logsRec]=await Promise.all([
-      db.get('settings','syncDeviceId'),
-      db.get('settings','syncLastTime'),
-      db.get('settings','platforms'),
-      db.get('settings','shippingShortcuts'),
-      db.get('settings','janCodes'),
-      db.get('settings','syncLogs'),
-    ]);
-    const lastSyncTime=lastRec?.value||0;
-    const ts=p=>(p.updatedAt||p.createdAt||0);
-
-    const expProds=type==='delta'?products.filter(p=>ts(p)>lastSyncTime):products;
-    const expList=type==='delta'?listings.filter(l=>ts(l)>lastSyncTime):listings;
-
-    // 更新同期で0件の場合は確認
-    if(type==='delta'&&expProds.length===0&&expList.length===0){
-      toast('未同期のデータがありません');return;
-    }
-
-    const syncData={
-      version:'sync_v1',
-      type,
-      deviceId:devRec?.value||'',
-      exportedAt:new Date().toISOString(),
-      since:type==='delta'?lastSyncTime:0,
-      products:expProds,
-      listings:expList,
-      settings:{
-        platforms:pfRec?.value||[],
-        shippingShortcuts:shRec?.value||[],
-        janCodes:janRec?.value||[],
-      },
-    };
-
-    const now=Date.now();
-    const blob=new Blob([JSON.stringify(syncData)],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    a.download=`sellerbook-sync-${type==='delta'?'delta':'full'}-${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    // 最終同期時刻を更新
-    await db.put('settings',{key:'syncLastTime',value:now});
-
-    // ログ追加
-    const logs=logsRec?.value||[];
-    const label=type==='delta'
-      ?`更新データを同期 (商品${expProds.length}件・売上${expList.length}件・画像含む)`
-      :`全データを同期 (商品${expProds.length}件・売上${expList.length}件・画像含む)`;
-    logs.push({id:uid(),time:now,status:'ok',label,detail:`ファイル出力完了`});
-    await db.put('settings',{key:'syncLogs',value:logs});
-
-    toast(`✅ 同期ファイルを出力しました (${expProds.length+expList.length}件)`);
-    await _render('inventory',{},'同期');
-  }
-
-  function _syncImport(){
-    document.getElementById('__sync-file-input')?.click();
-  }
-
-  async function _syncApply(input){
-    const file=input.files?.[0];if(!file)return;
-    input.value=''; // 同じファイルを再選択できるようにリセット
-    const logsRec=await db.get('settings','syncLogs');
-    const logs=logsRec?.value||[];
-    const now=Date.now();
-    try{
-      const data=JSON.parse(await file.text());
-      if(!data.version?.startsWith('sync_v')){toast('同期ファイルの形式が無効です');return;}
-
-      const prods=data.products||[];
-      const listgs=data.listings||[];
-      const typeLabel=data.type==='full'?'全データ':'更新データ';
-      const ok=await confirmDialog(
-        `同期ファイルを適用しますか？\n\n${typeLabel}（${data.deviceId||'不明なデバイス'}）\n・商品マスタ: ${prods.length}件\n・売上データ: ${listgs.length}件\n\n同じIDのデータは更新日時が新しい方を優先します。`,
-        '適用する','btn-primary'
-      );
-      if(!ok)return;
-
-      // 商品マージ（updatedAt が新しい方を優先）
-      let prodAdded=0,prodUpdated=0,prodSkipped=0;
-      for(const p of prods){
-        const ex=await db.get('products',p.id);
-        if(!ex){await db.put('products',p);prodAdded++;}
-        else{
-          const exT=ex.updatedAt||ex.createdAt||0;
-          const inT=p.updatedAt||p.createdAt||0;
-          if(inT>exT){await db.put('products',p);prodUpdated++;}
-          else prodSkipped++;
-        }
-      }
-
-      // 売上マージ
-      let listAdded=0,listUpdated=0,listSkipped=0;
-      for(const l of listgs){
-        const ex=await db.get('listings',l.id);
-        if(!ex){await db.put('listings',l);listAdded++;}
-        else{
-          const exT=ex.updatedAt||ex.createdAt||0;
-          const inT=l.updatedAt||l.createdAt||0;
-          if(inT>exT){await db.put('listings',l);listUpdated++;}
-          else listSkipped++;
-        }
-      }
-
-      // カスタム設定の同期（確認あり）
-      const s=data.settings||{};
-      const hasSettings=(s.platforms?.length||s.shippingShortcuts?.length||s.janCodes?.length);
-      if(hasSettings){
-        const mergeOk=await confirmDialog(
-          'カスタム設定（プラットフォーム・送料プリセット・JANコード）も同期しますか？\n「いいえ」の場合は現在の設定を保持します。',
-          'はい、同期する','btn-primary'
-        );
-        if(mergeOk){
-          if(s.platforms?.length){PLATFORMS=s.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
-          if(s.shippingShortcuts?.length){SHIPPING_SHORTCUTS=s.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
-          if(s.janCodes?.length){JAN_CODES=s.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
-        }
-      }
-
-      // 最終同期時刻を更新
-      await db.put('settings',{key:'syncLastTime',value:now});
-
-      // ログ
-      const detail=`商品: 追加${prodAdded} 更新${prodUpdated} スキップ${prodSkipped} / 売上: 追加${listAdded} 更新${listUpdated} スキップ${listSkipped}`;
-      logs.push({id:uid(),time:now,status:'import',label:'同期ファイルを適用しました',detail});
-      await db.put('settings',{key:'syncLogs',value:logs});
-
-      toast(`✅ 同期完了 (商品+${prodAdded}/更新${prodUpdated} 売上+${listAdded}/更新${listUpdated})`);
-      await _render('inventory',{},'同期');
-    }catch(e){
-      logs.push({id:uid(),time:now,status:'error',label:'同期ファイルの適用に失敗',detail:e.message});
-      await db.put('settings',{key:'syncLogs',value:logs});
-      toast('❌ 同期失敗: '+e.message);
-      await _render('inventory',{},'同期');
-    }
-  }
-
-  async function _syncClearLogs(){
-    const ok=await confirmDialog('同期ログをクリアしますか？');if(!ok)return;
-    await db.put('settings',{key:'syncLogs',value:[]});
-    toast('ログをクリアしました');
-    await _render('inventory',{},'同期');
-  }
-
-  // =====================================================================
   // SETTINGS
   // =====================================================================
   // =====================================================================
@@ -3230,7 +2855,6 @@ const App = (() => {
     _anaTab:()=>{}, _anaNav:()=>{}, _anaRkSort:()=>{}, _anaRkPeriod:()=>{},
     _anaPfPeriod:()=>{}, _anaInvDays:()=>{}, _anaInvToggle:()=>{},
     _exportListingsCSV, _csvByPeriod,
-    _syncExport, _syncImport, _syncApply, _syncClearLogs,
     _editShipping:()=>{}, _resetShipping:async()=>{
       const ok=await confirmDialog('送料プリセットをデフォルトに戻しますか？');if(!ok)return;
       SHIPPING_SHORTCUTS=[...DEFAULT_SHIPPING_SHORTCUTS];
