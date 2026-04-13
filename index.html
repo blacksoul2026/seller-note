@@ -160,8 +160,10 @@
       } else {
         // 未ログインまたは匿名 → ログアウトしてログイン画面へ
         if (user && user.isAnonymous) await signOut(window._auth);
+        document.getElementById('splash-screen').style.display = 'flex';
         document.getElementById('__splash-loading').style.display = 'none';
         document.getElementById('__splash-login').style.display = 'flex';
+        document.getElementById('app').style.display = 'none';
       }
     });
   </script>
