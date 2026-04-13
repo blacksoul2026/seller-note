@@ -47,16 +47,9 @@ img { max-width: 100%; display: block; }
 #header h1 {
   font-size: 17px;
   font-weight: 700;
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  flex: 1;
   text-align: center;
   color: var(--primary);
-  pointer-events: none;
-  white-space: nowrap;
-  max-width: 55%;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .header-btn {
   min-width: 40px;
@@ -525,9 +518,6 @@ img { max-width: 100%; display: block; }
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
 }
 .photo-cell img { width: 100%; height: 100%; object-fit: cover; }
 .photo-cell .add-icon { font-size: 22px; color: #BDBDBD; }
@@ -997,14 +987,13 @@ img { max-width: 100%; display: block; }
   margin-bottom: 2px;
 }
 .sli-name {
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 13px;
+  font-weight: 600;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--text-secondary);
 }
 .sli-status-btn {
   flex-shrink: 0;
@@ -1290,7 +1279,7 @@ img { max-width: 100%; display: block; }
 .sli-simple:active { background: var(--gray-light); }
 .sli-simple-thumb { width: 52px; height: 52px; border-radius: 8px; background: var(--gray-light); overflow: hidden; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .sli-simple-body { flex: 1; min-width: 0; }
-.sli-simple-name { font-size: 11px; font-weight: 400; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-secondary); }
+.sli-simple-name { font-size: 14px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sli-simple-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
 .sli-simple-right { text-align: right; flex-shrink: 0; }
 .sli-simple-profit { font-size: 15px; font-weight: 700; }
