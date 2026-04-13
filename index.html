@@ -85,16 +85,10 @@
     </div>
   </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js"></script>
   <script>
-    // 古いサービスワーカーを全て解除（キャッシュ問題を防ぐ）
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(regs => {
-        regs.forEach(r => r.unregister());
-      });
-    }
-    if ('caches' in window) {
-      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
   </script>
 

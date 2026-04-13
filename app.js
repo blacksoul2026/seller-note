@@ -363,14 +363,16 @@ const App = (() => {
     const cs=list=>({
       sales:list.reduce((a,l)=>a+(Number(l.salePrice)||0),0),
       cost:list.reduce((a,l)=>a+(Number(l.purchasePrice)||0)+(Number(l.fee)||0)+(Number(l.shipping)||0),0),
-      profit:list.reduce((a,l)=>a+(Number(l.profit)||0),0),
+      grossProfit:list.reduce((a,l)=>a+(Number(l.salePrice)||0)-(Number(l.purchasePrice)||0),0), // 粗利＝売上−仕入れ値
+      profit:list.reduce((a,l)=>a+(Number(l.profit)||0),0), // 利益＝売上−仕入れ−手数料−送料
       get margin(){return this.sales>0?(this.profit/this.sales*100).toFixed(1):'0.0';},
       count:list.length
     });
     const sh=s=>`<div class="ana-stats-grid">
       <div class="ana-stat"><div class="ana-stat-lbl">売上</div><div class="ana-stat-val">${yen(s.sales)}</div></div>
       <div class="ana-stat"><div class="ana-stat-lbl">コスト</div><div class="ana-stat-val">${yen(s.cost)}</div></div>
-      <div class="ana-stat"><div class="ana-stat-lbl">粗利</div><div class="ana-stat-val" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</div></div>
+      <div class="ana-stat"><div class="ana-stat-lbl">粗利</div><div class="ana-stat-val" style="color:${s.grossProfit>=0?'var(--success)':'var(--danger)'};">${yen(s.grossProfit)}</div></div>
+      <div class="ana-stat"><div class="ana-stat-lbl">利益</div><div class="ana-stat-val" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</div></div>
       <div class="ana-stat"><div class="ana-stat-lbl">利益率</div><div class="ana-stat-val">${s.margin}%</div></div>
       <div class="ana-stat"><div class="ana-stat-lbl">販売数</div><div class="ana-stat-val">${s.count}件</div></div>
     </div>`;
@@ -386,7 +388,7 @@ const App = (() => {
       }else if(tab==='yearly'){
         const s=cs(fby(completedL,aYear));
         const mrows=Array.from({length:12},(_,i)=>{const ms=cs(fbm(completedL,aYear,i));return `<tr><td>${MO[i]}</td><td class="n">${yen(ms.sales)}</td><td class="n" style="color:${ms.profit>=0?'var(--success)':'var(--danger)'};">${yen(ms.profit)}</td><td class="n">${ms.margin}%</td><td class="n">${ms.count}</td></tr>`;}).join('');
-        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('y',-1)">‹</button><span class="ana-period-lbl">${aYear}年</span><button class="ana-nav" onclick="App._anaNav('y',1)">›</button></div>${sh(s)}<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>月</th><th class="n">売上</th><th class="n">粗利</th><th class="n">利益率</th><th class="n">件数</th></tr></thead><tbody>${mrows}</tbody></table></div>`;
+        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('y',-1)">‹</button><span class="ana-period-lbl">${aYear}年</span><button class="ana-nav" onclick="App._anaNav('y',1)">›</button></div>${sh(s)}<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>月</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">件数</th></tr></thead><tbody>${mrows}</tbody></table></div>`;
 
       }else if(tab==='ranking'){
         const list=rkPeriod==='month'?fbm(completedL,rkYear,rkMonth):fby(completedL,rkYear);
@@ -405,9 +407,9 @@ const App = (() => {
         else if(rkSort==='sales')ranked.sort((a,b)=>b.sales-a.sales);
         else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
         ranked=ranked.slice(0,30);
-        const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'粗利'},{k:'sales',l:'売上'},{k:'margin',l:'粗利率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
+        const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'利益'},{k:'sales',l:'売上'},{k:'margin',l:'利益率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
         const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td style="font-size:12px;">${esc(item.name)}${item.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(item.code)}</div>`:''}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(item.lastDate)}</td></tr>`;}).join('');
-        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th>商品名</th><th class="n">販売数</th><th class="n">売上</th><th class="n">粗利</th><th class="n">粗利率</th><th class="n">在庫</th><th class="n">最終日</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th>商品名</th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th><th class="n">最終日</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='inventory'){
         const cutMs=Date.now()-invDays*86400000;
