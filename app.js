@@ -4,15 +4,9 @@
 // CLOUDINARY CONFIG
 // =====================================================================
 const _CLD = {
-  cloud: 'dpbyfsaiq',
-  key:   '168436258865881',
-  sec:   'q_3Z8720M25n0H6qf6k45E3K65A',
+  cloud:  'dpbyfsaiq',
+  preset: 'seller_note', // Cloudinaryダッシュボードで作成したunsigned preset名
 };
-
-async function _sha1(msg) {
-  const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(msg));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-}
 
 // =====================================================================
 // DATABASE（Firestore版 + ローカル写真キャッシュ）
@@ -59,14 +53,12 @@ class DB {
 
   // base64 → Cloudinary → secure_url。既にURLなら何もしない
   async _uploadToCloudinary(b64) {
-    if (!b64 || !b64.startsWith('data:')) return b64; // すでにURL
-    const ts = Math.floor(Date.now() / 1000);
-    const sig = await _sha1(`timestamp=${ts}${_CLD.sec}`);
+    if (!b64 || !b64.startsWith('data:')) return b64;
+    // base64をBlobに変換してアップロード（iOSで確実に動く方式）
+    const blob = await fetch(b64).then(r => r.blob());
     const fd = new FormData();
-    fd.append('file', b64);
-    fd.append('api_key', _CLD.key);
-    fd.append('timestamp', String(ts));
-    fd.append('signature', sig);
+    fd.append('file', blob, 'photo.jpg');
+    fd.append('upload_preset', _CLD.preset);
     const res = await fetch(`https://api.cloudinary.com/v1_1/${_CLD.cloud}/image/upload`, { method:'POST', body:fd });
     if (!res.ok) {
       let detail = '';
@@ -914,16 +906,84 @@ const App = (() => {
     const product=id?await db.get('products',id):null;
     _currentPhotos=product?.photos?[...product.photos]:[];
 
+    // ドラッグ状態（renderPhotoGrid外で管理してlistener重複を防ぐ）
+    let _pds=null; // {src, clone, timer}
+    let _pdGridEl=null; // 現在のgrid要素
+
+    function _getPhotoCell(x,y){
+      if(_pds?.clone) _pds.clone.style.visibility='hidden';
+      const el=document.elementFromPoint(x,y);
+      if(_pds?.clone) _pds.clone.style.visibility='';
+      return el?.closest('.photo-cell[data-idx]');
+    }
+
+    function _pdMoveClone(x,y){
+      if(!_pds?.clone) return;
+      const tw=parseFloat(_pds.clone.style.width), th=parseFloat(_pds.clone.style.height);
+      _pds.clone.style.left=(x-tw/2)+'px';
+      _pds.clone.style.top=(y-th/2)+'px';
+      const over=_getPhotoCell(x,y);
+      _pdGridEl?.querySelectorAll('.photo-cell[data-idx]').forEach(c=>c.classList.remove('drag-over'));
+      if(over&&parseInt(over.dataset.idx)!==_pds.src) over.classList.add('drag-over');
+    }
+
+    function _pdEnd(x,y){
+      if(_pds?.timer){clearTimeout(_pds.timer);}
+      const src=_pds?.src??null;
+      const wasDragging=src!==null&&_pds?.clone;
+      if(_pds?.clone){_pds.clone.remove();}
+      _pdGridEl?.querySelectorAll('.photo-cell[data-idx]').forEach(c=>{c.classList.remove('drag-over');c.style.opacity='';});
+      _pds=null;
+      if(wasDragging&&x!=null){
+        const over=_getPhotoCell(x,y);
+        if(over){
+          const dest=parseInt(over.dataset.idx);
+          if(dest!==src){
+            const moved=_currentPhotos.splice(src,1)[0];
+            _currentPhotos.splice(dest,0,moved);
+            renderPhotoGrid();
+            return;
+          }
+        }
+      }
+    }
+
+    function _pdStartDrag(cell,srcIdx){
+      _pds={src:srcIdx,clone:null,timer:null};
+      if(navigator.vibrate) navigator.vibrate(40);
+      const rect=cell.getBoundingClientRect();
+      const clone=cell.cloneNode(true);
+      Object.assign(clone.style,{
+        position:'fixed',width:rect.width+'px',height:rect.height+'px',
+        top:rect.top+'px',left:rect.left+'px',opacity:'0.88',
+        border:'2px solid #555',borderRadius:'8px',zIndex:'9999',
+        pointerEvents:'none',transform:'scale(1.07)',
+        boxShadow:'0 8px 24px rgba(0,0,0,0.3)',
+      });
+      document.body.appendChild(clone);
+      _pds.clone=clone;
+      cell.style.opacity='0.25';
+    }
+
+    // グローバルmouseイベント（PC対応）
+    function _onMouseMove(e){ if(_pds?.clone) _pdMoveClone(e.clientX,e.clientY); }
+    function _onMouseUp(e){ document.removeEventListener('mousemove',_onMouseMove); document.removeEventListener('mouseup',_onMouseUp); _pdEnd(e.clientX,e.clientY); }
+
     function renderPhotoGrid(){
-      const grid=document.getElementById('__photo-grid');
-      if(!grid) return;
+      const oldGrid=document.getElementById('__photo-grid');
+      if(!oldGrid) return;
+      // 古いlistenerをクリアするためにノードを置き換え
+      const grid=oldGrid.cloneNode(false);
+      oldGrid.parentNode.replaceChild(grid,oldGrid);
+      _pdGridEl=grid;
+
       let html='';
       for(let i=0;i<10;i++){
         if(_currentPhotos[i]){
-          html+=`<div class="photo-cell" data-idx="${i}">
-            <img src="${_currentPhotos[i]}" alt="" style="width:100%;height:100%;object-fit:cover;pointer-events:none;">
-            <button class="photo-del" onclick="App._removePhoto(${i})" style="pointer-events:auto;">×</button>
-            <div style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;color:white;background:rgba(0,0,0,0.4);pointer-events:none;">${i+1}</div>
+          html+=`<div class="photo-cell" data-idx="${i}" style="cursor:grab;touch-action:none;">
+            <img src="${_currentPhotos[i]}" alt="" style="width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;">
+            <div class="photo-del" data-del="${i}">×</div>
+            <div style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;color:white;background:rgba(0,0,0,0.45);pointer-events:none;">${i+1}</div>
           </div>`;
         } else {
           html+=`<div class="photo-cell" style="opacity:0.2;"><span style="font-size:16px;">📷</span><div style="font-size:9px;color:#999;">${i+1}</div></div>`;
@@ -933,65 +993,45 @@ const App = (() => {
       const hd=document.getElementById('__photo-hd');
       if(hd) hd.textContent=`写真（最大10枚 · ${_currentPhotos.length}枚登録済み）`;
 
-      // タッチで長押し→ドラッグ並び替え
-      let touchSrcIdx=null, touchClone=null, touchTimer=null;
-      grid.querySelectorAll('.photo-cell[data-idx]').forEach(cell=>{
-        const idx=parseInt(cell.dataset.idx);
-        cell.addEventListener('touchstart',e=>{
-          if(e.target.classList.contains('photo-del'))return;
-          touchTimer=setTimeout(()=>{
-            touchSrcIdx=idx;
-            if(navigator.vibrate)navigator.vibrate(40);
-            const rect=cell.getBoundingClientRect();
-            touchClone=cell.cloneNode(true);
-            Object.assign(touchClone.style,{
-              position:'fixed',width:rect.width+'px',height:rect.height+'px',
-              top:rect.top+'px',left:rect.left+'px',
-              opacity:'0.85',border:'2px solid var(--primary)',borderRadius:'8px',
-              zIndex:'9999',pointerEvents:'none',transform:'scale(1.08)',
-              boxShadow:'0 8px 24px rgba(0,0,0,0.3)',
-            });
-            document.body.appendChild(touchClone);
-            cell.style.opacity='0.3';
-          },400);
-        },{passive:true});
-        cell.addEventListener('touchmove',e=>{
-          if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
-          if(touchSrcIdx===null||!touchClone)return;
-          e.preventDefault();
-          const t=e.touches[0];
-          const tw=parseFloat(touchClone.style.width),th=parseFloat(touchClone.style.height);
-          touchClone.style.left=(t.clientX-tw/2)+'px';
-          touchClone.style.top=(t.clientY-th/2)+'px';
-          touchClone.style.display='none';
-          const el=document.elementFromPoint(t.clientX,t.clientY);
-          touchClone.style.display='';
-          grid.querySelectorAll('.photo-cell[data-idx]').forEach(c=>c.classList.remove('drag-over'));
-          const over=el?.closest('.photo-cell[data-idx]');
-          if(over&&parseInt(over.dataset.idx)!==touchSrcIdx)over.classList.add('drag-over');
-        },{passive:false});
-        const endTouch=e=>{
-          if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
-          if(touchClone){touchClone.remove();touchClone=null;}
-          grid.querySelectorAll('.photo-cell[data-idx]').forEach(c=>{c.classList.remove('drag-over');c.style.opacity='';});
-          if(touchSrcIdx!==null&&e.changedTouches){
-            const t=e.changedTouches[0];
-            touchClone&&touchClone.remove();
-            const el=document.elementFromPoint(t.clientX,t.clientY);
-            const over=el?.closest('.photo-cell[data-idx]');
-            if(over){
-              const destIdx=parseInt(over.dataset.idx);
-              if(destIdx!==touchSrcIdx){
-                const moved=_currentPhotos.splice(touchSrcIdx,1)[0];
-                _currentPhotos.splice(destIdx,0,moved);
-                renderPhotoGrid();
-              }
-            }
-          }
-          touchSrcIdx=null;
-        };
-        cell.addEventListener('touchend',endTouch,{passive:true});
-        cell.addEventListener('touchcancel',endTouch,{passive:true});
+      // 削除ボタン
+      grid.querySelectorAll('.photo-del[data-del]').forEach(btn=>{
+        btn.addEventListener('click',e=>{e.stopPropagation();_currentPhotos.splice(parseInt(btn.dataset.del),1);renderPhotoGrid();});
+      });
+
+      // タッチドラッグ（iPhone）
+      grid.addEventListener('touchstart',e=>{
+        const cell=e.target.closest('.photo-cell[data-idx]');
+        if(!cell||e.target.dataset.del!=null) return;
+        const srcIdx=parseInt(cell.dataset.idx);
+        _pds={src:null,clone:null,timer:setTimeout(()=>_pdStartDrag(cell,srcIdx),400)};
+      },{passive:true});
+
+      grid.addEventListener('touchmove',e=>{
+        if(_pds?.timer&&!_pds.clone){clearTimeout(_pds.timer);_pds.timer=null;_pds=null;return;}
+        if(!_pds?.clone) return;
+        e.preventDefault();
+        const t=e.touches[0];
+        _pdMoveClone(t.clientX,t.clientY);
+      },{passive:false});
+
+      grid.addEventListener('touchend',e=>{
+        if(_pds?.timer){clearTimeout(_pds.timer);_pds=null;return;}
+        const t=e.changedTouches[0];
+        _pdEnd(t?.clientX,t?.clientY);
+      },{passive:true});
+
+      grid.addEventListener('touchcancel',()=>{if(_pds?.timer)clearTimeout(_pds.timer);_pdEnd(null,null);},{passive:true});
+
+      // マウスドラッグ（PC）
+      grid.addEventListener('mousedown',e=>{
+        const cell=e.target.closest('.photo-cell[data-idx]');
+        if(!cell||e.target.dataset.del!=null) return;
+        const srcIdx=parseInt(cell.dataset.idx);
+        _pds={src:null,clone:null,timer:setTimeout(()=>{
+          _pdStartDrag(cell,srcIdx);
+          document.addEventListener('mousemove',_onMouseMove);
+          document.addEventListener('mouseup',_onMouseUp);
+        },300)};
       });
     }
     _renderPhotoGrid=renderPhotoGrid;
