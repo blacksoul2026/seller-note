@@ -13,10 +13,24 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- 起動中画面 -->
-  <div id="splash-screen" style="position:fixed;inset:0;background:#ffffff;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;">
-    <div style="font-size:28px;font-weight:700;color:#333;margin-bottom:8px;">セラーノート</div>
-    <div style="font-size:14px;color:#999;">読み込み中...</div>
+  <!-- 起動中 / ログイン画面 -->
+  <div id="splash-screen" style="position:fixed;inset:0;background:#ffffff;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;box-sizing:border-box;">
+    <div id="__splash-loading" style="text-align:center;">
+      <div style="font-size:28px;font-weight:700;color:#333;margin-bottom:8px;">セラーノート</div>
+      <div style="font-size:14px;color:#999;">読み込み中...</div>
+    </div>
+    <div id="__splash-login" style="display:none;flex-direction:column;align-items:center;gap:16px;width:100%;max-width:320px;">
+      <div style="font-size:26px;font-weight:700;color:#333;">セラーノート</div>
+      <div style="font-size:13px;color:#888;text-align:center;line-height:1.7;">メールアドレスとパスワードでログイン<br><span style="font-size:11px;">※ 次回から自動でログインされます</span></div>
+      <input id="__login-email" type="email" placeholder="メールアドレス" autocomplete="email"
+        style="width:100%;padding:14px;border:1px solid #ddd;border-radius:8px;font-size:16px;box-sizing:border-box;">
+      <input id="__login-pass" type="password" placeholder="パスワード（6文字以上）" autocomplete="current-password"
+        style="width:100%;padding:14px;border:1px solid #ddd;border-radius:8px;font-size:16px;box-sizing:border-box;">
+      <button onclick="window._doLogin()" style="width:100%;padding:14px;background:#333;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;">
+        ログイン / 新規登録
+      </button>
+      <div id="__login-error" style="font-size:13px;color:#c62828;text-align:center;display:none;line-height:1.5;"></div>
+    </div>
   </div>
 
   <div id="app" style="display:none;">
@@ -88,7 +102,7 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
     import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, query, where } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-    import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
     const firebaseConfig = {
       apiKey: "AIzaSyA3sQ8oKNfUYts3qrxEz3EkTZzsnEFF2AA",
@@ -103,8 +117,36 @@
     window._firestore = getFirestore(fbApp);
     window._auth = getAuth(fbApp);
     window._fs = { collection, doc, getDoc, getDocs, setDoc, deleteDoc, query, where };
+    window._signOut = () => signOut(window._auth);
 
-    // 匿名ログイン（ユーザー操作不要・自動）
+    window._doLogin = async () => {
+      const email = document.getElementById('__login-email').value.trim();
+      const pass  = document.getElementById('__login-pass').value;
+      const err   = document.getElementById('__login-error');
+      err.style.display = 'none';
+      if (!email || !pass) {
+        err.textContent = 'メールアドレスとパスワードを入力してください';
+        err.style.display = 'block'; return;
+      }
+      try {
+        await signInWithEmailAndPassword(window._auth, email, pass);
+      } catch(e) {
+        if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
+          try {
+            await createUserWithEmailAndPassword(window._auth, email, pass);
+          } catch(e2) {
+            const m = {'auth/weak-password':'パスワードは6文字以上にしてください','auth/invalid-email':'メールアドレスの形式が正しくありません','auth/email-already-in-use':'パスワードが違います'};
+            err.textContent = m[e2.code] || 'エラー: '+e2.code;
+            err.style.display = 'block';
+          }
+        } else {
+          const m = {'auth/wrong-password':'パスワードが違います','auth/invalid-email':'メールアドレスの形式が正しくありません','auth/too-many-requests':'しばらく待ってから試してください'};
+          err.textContent = m[e.code] || 'エラー: '+e.code;
+          err.style.display = 'block';
+        }
+      }
+    };
+
     onAuthStateChanged(window._auth, async (user) => {
       if (user) {
         window._currentUser = user;
@@ -115,8 +157,8 @@
           await App.init();
         }
       } else {
-        // 未ログインなら自動で匿名ログイン
-        await signInAnonymously(window._auth);
+        document.getElementById('__splash-loading').style.display = 'none';
+        document.getElementById('__splash-login').style.display = 'flex';
       }
     });
   </script>

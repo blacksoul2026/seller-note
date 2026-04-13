@@ -2665,12 +2665,16 @@ const App = (() => {
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">全データを削除</div></div>
         </div>
       </div>
-      <div class="section-hd" style="margin-top:10px;">クラウド保存</div>
+      <div class="section-hd" style="margin-top:10px;">アカウント</div>
       <div style="background:var(--white);">
-        <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;">
+        <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--gray-border);gap:12px;">
           <span style="font-size:22px;">☁️</span>
-          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">Firebaseクラウド保存</div><div style="font-size:12px;color:var(--text-secondary);">自動保存・ログイン不要</div></div>
+          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">クラウド保存</div><div style="font-size:12px;color:var(--text-secondary);">${window._currentUser?.email||''}</div></div>
           <span style="font-size:11px;color:#4CAF50;font-weight:600;">有効</span>
+        </div>
+        <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer;color:var(--danger);" onclick="window._signOut()">
+          <span style="font-size:22px;">🚪</span>
+          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">ログアウト</div></div>
         </div>
       </div>
       <div class="section-hd" style="margin-top:10px;">このアプリについて</div>
