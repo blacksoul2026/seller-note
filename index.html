@@ -148,7 +148,8 @@
     };
 
     onAuthStateChanged(window._auth, async (user) => {
-      if (user) {
+      if (user && !user.isAnonymous) {
+        // メール/パスワードでログイン済み → アプリを開く
         window._currentUser = user;
         document.getElementById('splash-screen').style.display = 'none';
         document.getElementById('app').style.display = '';
@@ -157,6 +158,8 @@
           await App.init();
         }
       } else {
+        // 未ログインまたは匿名 → ログアウトしてログイン画面へ
+        if (user && user.isAnonymous) await signOut(window._auth);
         document.getElementById('__splash-loading').style.display = 'none';
         document.getElementById('__splash-login').style.display = 'flex';
       }
