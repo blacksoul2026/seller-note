@@ -1,6 +1,20 @@
 'use strict';
 
 // =====================================================================
+// CLOUDINARY CONFIG
+// =====================================================================
+const _CLD = {
+  cloud: 'dpbyfsaiq',
+  key:   '168436258865881',
+  sec:   'q_3Z8720M25n0H6qf6k45E3K65A',
+};
+
+async function _sha1(msg) {
+  const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// =====================================================================
 // DATABASE（Firestore版 + ローカル写真キャッシュ）
 // =====================================================================
 class DB {
@@ -43,9 +57,34 @@ class DB {
     });
   }
 
+  // base64 → Cloudinary → secure_url。既にURLなら何もしない
+  async _uploadToCloudinary(b64) {
+    if (!b64 || !b64.startsWith('data:')) return b64; // すでにURL
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = await _sha1(`timestamp=${ts}${_CLD.sec}`);
+    const fd = new FormData();
+    fd.append('file', b64);
+    fd.append('api_key', _CLD.key);
+    fd.append('timestamp', ts);
+    fd.append('signature', sig);
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${_CLD.cloud}/image/upload`, { method:'POST', body:fd });
+    if (!res.ok) throw new Error('Cloudinary upload failed: ' + res.status);
+    const json = await res.json();
+    return json.secure_url;
+  }
+
   async _merge(item, store) {
-    if (store === 'products') return { ...item, photos: (await this._phGet('p:' + item.id)) || [] };
-    if (store === 'listings') return { ...item, photo: (await this._phGet('l:' + item.id)) || '' };
+    if (store === 'products') {
+      // Firestoreに写真URLが入っていればそれを使う、なければローカルIndexedDB
+      const fsPhotos = item.photos;
+      if (fsPhotos && fsPhotos.length > 0) return item;
+      return { ...item, photos: (await this._phGet('p:' + item.id)) || [] };
+    }
+    if (store === 'listings') {
+      const fsPhoto = item.photo;
+      if (fsPhoto && fsPhoto.startsWith('http')) return item;
+      return { ...item, photo: (await this._phGet('l:' + item.id)) || '' };
+    }
     return item;
   }
 
@@ -67,8 +106,22 @@ class DB {
   async put(store, data) {
     const { setDoc } = window._fs;
     const save = { ...data };
-    if (store === 'products') { await this._phPut('p:' + data.id, save.photos || []); save.photos = []; }
-    if (store === 'listings') { await this._phPut('l:' + data.id, save.photo || ''); save.photo = ''; }
+    if (store === 'products') {
+      // base64写真をCloudinaryにアップロードしてURLに変換
+      const uploaded = [];
+      for (const ph of (save.photos || [])) {
+        try { uploaded.push(await this._uploadToCloudinary(ph)); }
+        catch(e) { console.warn('Cloudinary upload error:', e); uploaded.push(ph); } // 失敗時はbase64のまま保持（フォールバック）
+      }
+      save.photos = uploaded;
+      // ローカルIndexedDBには空配列を書いてキャッシュをクリア
+      await this._phPut('p:' + data.id, []);
+    }
+    if (store === 'listings') {
+      try { save.photo = await this._uploadToCloudinary(save.photo || ''); }
+      catch(e) { console.warn('Cloudinary upload error:', e); }
+      await this._phPut('l:' + data.id, '');
+    }
     const docId = store === 'settings' ? data.key : data.id;
     await setDoc(this._doc(store, String(docId)), save);
   }
