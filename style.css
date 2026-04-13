@@ -226,6 +226,8 @@ img { max-width: 100%; display: block; }
 }
 .grid-count { font-size: 13px; color: var(--text-secondary); }
 .grid-sort-btn { font-size: 13px; color: var(--primary); display: flex; align-items: center; gap: 4px; }
+.cat-filter-btn { display:inline-block; margin-right:8px; padding:5px 14px; border-radius:20px; font-size:13px; font-weight:600; background:var(--gray-light); color:var(--text-secondary); border:none; cursor:pointer; white-space:nowrap; }
+.cat-filter-btn.active { background:var(--primary); color:#fff; }
 
 /* ===== SECTION HEADER ===== */
 .section-hd {

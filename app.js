@@ -436,7 +436,7 @@ const App = (() => {
     actionBtn.className='header-btn icon-pill';
     actionBtn.innerHTML='<span style="font-size:18px;">＋</span>';
     actionBtn.onclick=()=>navigate('product-form',{},'商品を追加');
-    let searchQ='', showHidden=false;
+    let searchQ='', showHidden=false, selectedCategory='all';
 
     function sortProducts(list) {
       const arr=[...list];
@@ -461,8 +461,25 @@ const App = (() => {
       }
     }
 
+    function getCategories() {
+      const cats=[...new Set(products.map(p=>p.category||'').filter(c=>c))];
+      return cats.sort((a,b)=>a.localeCompare(b,'ja'));
+    }
+
+    function renderCategoryBar() {
+      const bar=document.getElementById('__category-bar');
+      if(!bar) return;
+      const cats=getCategories();
+      if(cats.length===0){bar.style.display='none';return;}
+      bar.style.display='';
+      bar.innerHTML=[{k:'all',l:'すべて'},...cats.map(c=>({k:c,l:c}))].map(c=>
+        `<button class="cat-filter-btn${selectedCategory===c.k?' active':''}" onclick="App._setCategoryFilter('${esc(c.k)}')">${esc(c.l)}</button>`
+      ).join('');
+    }
+
     function filtered() {
       let base=showHidden?products:products.filter(p=>!p.hidden);
+      if(selectedCategory!=='all') base=base.filter(p=>(p.category||'')=== selectedCategory);
       if(!searchQ) return sortProducts(base);
       return sortProducts(base.filter(p=>(p.name||'').includes(searchQ)||(p.sku||'').includes(searchQ)||(p.code||'').includes(searchQ)));
     }
@@ -507,6 +524,7 @@ const App = (() => {
           <input class="search-input" id="__product-search" type="search" placeholder="商品名・管理番号で検索">
         </div>
       </div>
+      <div id="__category-bar" style="display:none;overflow-x:auto;white-space:nowrap;padding:8px 12px;background:var(--white);border-bottom:1px solid var(--gray-border);-webkit-overflow-scrolling:touch;scrollbar-width:none;"></div>
       <div class="grid-action-bar">
         <span class="grid-count" id="__grid-count">${products.length}件</span>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -518,7 +536,9 @@ const App = (() => {
       <div style="height:80px;"></div>`;
 
     renderGrid();
+    renderCategoryBar();
     App._refreshProductGrid=renderGrid;
+    App._setCategoryFilter=(cat)=>{selectedCategory=cat;renderCategoryBar();renderGrid();};
     setupGridDrag();
 
     document.getElementById('__product-search')?.addEventListener('input',e=>{searchQ=e.target.value.trim();renderGrid();});
