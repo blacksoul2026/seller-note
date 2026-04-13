@@ -107,19 +107,19 @@ class DB {
     const { setDoc } = window._fs;
     const save = { ...data };
     if (store === 'products') {
-      // base64写真をCloudinaryにアップロードしてURLに変換
       const uploaded = [];
       for (const ph of (save.photos || [])) {
-        try { uploaded.push(await this._uploadToCloudinary(ph)); }
-        catch(e) { console.warn('Cloudinary upload error:', e); uploaded.push(ph); } // 失敗時はbase64のまま保持（フォールバック）
+        if (!ph || !ph.startsWith('data:')) { uploaded.push(ph); continue; }
+        const url = await this._uploadToCloudinary(ph); // エラーは上位に投げる
+        uploaded.push(url);
       }
       save.photos = uploaded;
-      // ローカルIndexedDBには空配列を書いてキャッシュをクリア
       await this._phPut('p:' + data.id, []);
     }
     if (store === 'listings') {
-      try { save.photo = await this._uploadToCloudinary(save.photo || ''); }
-      catch(e) { console.warn('Cloudinary upload error:', e); }
+      if (save.photo && save.photo.startsWith('data:')) {
+        save.photo = await this._uploadToCloudinary(save.photo);
+      }
       await this._phPut('l:' + data.id, '');
     }
     const docId = store === 'settings' ? data.key : data.id;
@@ -1010,35 +1010,49 @@ const App = (() => {
     renderPhotoGrid();
   }
 
+  let _productSaving = false;
   async function _saveProduct(id) {
-    const name=document.getElementById('f-name')?.value?.trim();
-    if(!name){toast('商品名を入力してください');return;}
-    const existing=id?await db.get('products',id):null;
-    const product={
-      id:id||uid(), name,
-      sku:existing?.sku||'',
-      code:document.getElementById('f-code')?.value?.trim()||'',
-      productStatus:document.getElementById('f-product-status')?.value||'active',
-      hidden:document.getElementById('f-hidden')?.checked||false,
-      purchasePrice:Number(document.getElementById('f-purchasePrice')?.value)||0,
-      salePrice:Number(document.getElementById('f-salePrice')?.value)||0,
-      purchaseDate:document.getElementById('f-purchaseDate')?.value||'',
-      purchaseSource:document.getElementById('f-purchaseSource')?.value?.trim()||'',
-      stockCount:Number(document.getElementById('f-stock')?.value)||0,
-      category:document.getElementById('f-category')?.value?.trim()||'',
-      condition:document.getElementById('f-condition')?.value||'',
-      description:document.getElementById('f-desc')?.value?.trim()||'',
-      memo:document.getElementById('f-memo')?.value?.trim()||'',
-      photos:_currentPhotos||[],
-      createdAt:existing?.createdAt||Date.now(),
-      updatedAt:Date.now(),
-    };
-    await db.put('products',product);
-    toast('保存しました');
-    pageStack.pop();
-    const title=`${product.sku?product.sku+' ':''}${product.name}`;
-    if(id) await _render('product-detail',{id},title);
-    else await _render('products',{},'商品マスタ');
+    if (_productSaving) return; // 二重保存防止
+    _productSaving = true;
+    try {
+      const name=document.getElementById('f-name')?.value?.trim();
+      if(!name){toast('商品名を入力してください');return;}
+      const existing=id?await db.get('products',id):null;
+      const product={
+        id:id||uid(), name,
+        sku:existing?.sku||'',
+        code:document.getElementById('f-code')?.value?.trim()||'',
+        productStatus:document.getElementById('f-product-status')?.value||'active',
+        hidden:document.getElementById('f-hidden')?.checked||false,
+        purchasePrice:Number(document.getElementById('f-purchasePrice')?.value)||0,
+        salePrice:Number(document.getElementById('f-salePrice')?.value)||0,
+        purchaseDate:document.getElementById('f-purchaseDate')?.value||'',
+        purchaseSource:document.getElementById('f-purchaseSource')?.value?.trim()||'',
+        stockCount:Number(document.getElementById('f-stock')?.value)||0,
+        category:document.getElementById('f-category')?.value?.trim()||'',
+        condition:document.getElementById('f-condition')?.value||'',
+        description:document.getElementById('f-desc')?.value?.trim()||'',
+        memo:document.getElementById('f-memo')?.value?.trim()||'',
+        photos:_currentPhotos||[],
+        createdAt:existing?.createdAt||Date.now(),
+        updatedAt:Date.now(),
+      };
+      const hasNewPhotos = (_currentPhotos||[]).some(p=>p.startsWith('data:'));
+      if (hasNewPhotos) toast('📤 写真をクラウドにアップロード中...', 12000);
+      try {
+        await db.put('products',product);
+      } catch(e) {
+        toast('❌ エラー: ' + (e.message||e), 5000);
+        return;
+      }
+      toast(hasNewPhotos ? '✅ 写真をクラウドに保存しました' : '保存しました');
+      pageStack.pop();
+      const title=`${product.sku?product.sku+' ':''}${product.name}`;
+      if(id) await _render('product-detail',{id},title);
+      else await _render('products',{},'商品マスタ');
+    } finally {
+      _productSaving = false;
+    }
   }
 
   async function _addPhotos(input) {
