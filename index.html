@@ -94,22 +94,12 @@
         if (old && old !== d.v) { location.reload(true); }
       }).catch(() => {});
 
+    // Service Worker全解除（キャッシュ問題を根本解決）
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').then(reg => {
-        reg.update(); // 毎回最新のSWを確認
-        reg.addEventListener('updatefound', () => {
-          const nw = reg.installing;
-          nw.addEventListener('statechange', () => {
-            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-              location.reload(true);
-            }
-          });
-        });
-      }).catch(() => {});
-      let _r = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!_r) { _r = true; location.reload(true); }
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister());
       });
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
 
     // プルトゥリフレッシュ（下に引っ張ったら更新）
