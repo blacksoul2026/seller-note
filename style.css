@@ -47,9 +47,15 @@ img { max-width: 100%; display: block; }
 #header h1 {
   font-size: 17px;
   font-weight: 700;
-  flex: 1;
-  text-align: center;
   color: var(--primary);
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 120px);
+  pointer-events: none;
 }
 .header-btn {
   min-width: 40px;
@@ -495,11 +501,15 @@ img { max-width: 100%; display: block; }
   background: transparent;
   resize: none;
   color: var(--text);
-  min-height: 80px;
+  min-height: 150px;
 }
 .form-suffix { font-size: 14px; color: var(--text-secondary); margin-left: 4px; flex-shrink: 0; }
 
 /* ===== PHOTO GRID (edit form) ===== */
+.photo-edit-grid, .photo-edit-grid * {
+  user-select: none;
+  -webkit-user-select: none;
+}
 .photo-edit-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);

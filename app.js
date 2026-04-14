@@ -274,7 +274,7 @@ const App = (() => {
     actionBtn.className='header-btn hidden';
     actionBtn.onclick=null; actionBtn.textContent=''; actionBtn.innerHTML='';
     switch(page){
-      case 'home':       await pgHome(main); break;
+      case 'home':       await pgHome(main,actionBtn); break;
       case 'products':   await pgProducts(main,actionBtn); break;
       case 'product-detail': await pgProductDetail(main,params,actionBtn); break;
       case 'product-form':
@@ -302,7 +302,9 @@ const App = (() => {
   // =====================================================================
   // HOME
   // =====================================================================
-  async function pgHome(main) {
+  async function pgHome(main,actionBtn) {
+    actionBtn.className='header-btn pill-btn'; actionBtn.textContent='更新'; actionBtn.classList.remove('hidden');
+    actionBtn.onclick=()=>location.reload();
     const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
     const completedL=listings.filter(l=>l.status==='completed');
     const now=new Date();
@@ -310,7 +312,6 @@ const App = (() => {
     let mYear=now.getFullYear(),mMonth=now.getMonth();
     let aYear=now.getFullYear();
     let rkPeriod='month',rkYear=now.getFullYear(),rkMonth=now.getMonth(),rkSort='qty';
-    let invDays=30,invShowPaused=false,invShowDiscontinued=false;
     let pfPeriod='month',pfYear=now.getFullYear(),pfMonth=now.getMonth();
 
     const MO=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
@@ -364,39 +365,8 @@ const App = (() => {
         else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
         ranked=ranked.slice(0,30);
         const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'利益'},{k:'sales',l:'売上'},{k:'margin',l:'利益率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
-        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photo||'';const thumb=photo?`<img src="${photo}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;">`:`<div style="width:36px;height:36px;border-radius:4px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td style="font-size:12px;">${esc(item.name)}${item.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(item.code)}</div>`:''}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(item.lastDate)}</td></tr>`;}).join('');
-        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th>商品名</th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th><th class="n">最終日</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
-
-      }else if(tab==='inventory'){
-        const cutMs=Date.now()-invDays*86400000;
-        const d30Ms=Date.now()-30*86400000;
-        const smap={};
-        completedL.forEach(l=>{
-          if(!smap[l.productId])smap[l.productId]={qty30:0,qtyAll:0,sales:0,profit:0,lastDate:null};
-          smap[l.productId].qtyAll++;
-          smap[l.productId].sales+=Number(l.salePrice)||0;
-          smap[l.productId].profit+=Number(l.profit)||0;
-          if(!smap[l.productId].lastDate||l.saleDate>smap[l.productId].lastDate)smap[l.productId].lastDate=l.saleDate;
-          if(l.saleDate&&new Date(l.saleDate).getTime()>=d30Ms)smap[l.productId].qty30++;
-        });
-        const prods=products.filter(p=>{
-          const st=p.productStatus||'active';
-          if(st==='paused'&&!invShowPaused)return false;
-          if(st==='discontinued'&&!invShowDiscontinued)return false;
-          return true;
-        });
-        const ann=prods.map(p=>{
-          const s=smap[p.id]||{qty30:0,qtyAll:0,sales:0,profit:0,lastDate:null};
-          const stk=p.stockCount||0,pst=p.productStatus||'active';
-          const lastMs=s.lastDate?new Date(s.lastDate).getTime():0;
-          const labels=[];
-          if(stk===0&&pst==='active')labels.push({l:'在庫切れ',c:'var(--danger)'});
-          if(stk>0&&stk<=3&&s.qty30>0)labels.push({l:'補充候補',c:'#2196F3'});
-          if(s.qtyAll>0&&lastMs<cutMs)labels.push({l:'長期未販売',c:'#FF9800'});
-          return {p,s,labels};
-        });
-        const rows=ann.map(({p,s,labels})=>`<tr><td style="font-size:12px;">${esc(p.name)}${p.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(p.code)}</div>`:''}${labels.length?`<div style="margin-top:2px;">${labels.map(l=>`<span class="inv-lbl" style="background:${l.c}20;color:${l.c};">${l.l}</span>`).join('')}</div>`:''}</td><td class="n">${p.stockCount||0}</td><td class="n">${s.qty30}</td><td class="n">${s.qtyAll}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(s.lastDate)||'−'}</td><td class="n">${yen(s.sales)}</td><td class="n" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</td></tr>`).join('');
-        body.innerHTML=`<div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--white);border-bottom:1px solid var(--gray-border);"><span style="font-size:11px;color:var(--text-secondary);">長期未販売:</span>${[30,60,90].map(d=>`<button class="ana-sbtn${invDays===d?' ana-sbtn-on':''}" onclick="App._anaInvDays(${d})">${d}日以上</button>`).join('')}<div style="margin-left:auto;display:flex;gap:4px;"><button class="ana-sbtn${invShowPaused?' ana-sbtn-on':''}" onclick="App._anaInvToggle('paused')">休止も表示</button><button class="ana-sbtn${invShowDiscontinued?' ana-sbtn-on':''}" onclick="App._anaInvToggle('disc')">廃番も表示</button></div></div>${ann.length===0?'<div class="ana-empty">表示する商品がありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>商品名</th><th class="n">在庫</th><th class="n">30日</th><th class="n">累計</th><th class="n">最終日</th><th class="n">売上</th><th class="n">粗利</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photo||'';const thumb=photo?`<img src="${photo}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;">`:`<div style="width:36px;height:36px;border-radius:4px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='platform'){
         const list=pfPeriod==='month'?fbm(completedL,pfYear,pfMonth):fby(completedL,pfYear);
@@ -424,8 +394,6 @@ const App = (() => {
     App._anaRkSort=s=>{rkSort=s;renderContent();};
     App._anaRkPeriod=p=>{rkPeriod=p;renderContent();};
     App._anaPfPeriod=p=>{pfPeriod=p;renderContent();};
-    App._anaInvDays=d=>{invDays=d;renderContent();};
-    App._anaInvToggle=w=>{if(w==='paused')invShowPaused=!invShowPaused;else invShowDiscontinued=!invShowDiscontinued;renderContent();};
   }
 
   // =====================================================================
@@ -433,9 +401,10 @@ const App = (() => {
   // =====================================================================
   async function pgProducts(main,actionBtn) {
     const products=await db.getAll('products');
-    actionBtn.className='header-btn icon-pill';
-    actionBtn.innerHTML='<span style="font-size:18px;">＋</span>';
-    actionBtn.onclick=()=>navigate('product-form',{},'商品を追加');
+    actionBtn.className='header-btn-group';
+    actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
+    actionBtn.onclick=null;
+    actionBtn.innerHTML=`<button class="hbg-btn" onclick="location.reload()" style="font-size:13px;font-weight:600;">更新</button><button class="hbg-btn icon-pill" onclick="App.navigate('product-form',{},'商品を追加')" style="font-size:18px;">＋</button>`;
     let searchQ='', showHidden=false, selectedCategory='all';
 
     function sortProducts(list) {
@@ -1166,7 +1135,7 @@ const App = (() => {
           <!-- プラットフォーム -->
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;font-weight:600;">プラットフォーム</div>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:14px;" id="__ob-platforms">
-            ${PLATFORMS.map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-key="${p.key}" style="font-size:11px;padding:7px 3px;${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
+            ${PLATFORMS.filter(p=>!p.hidden).map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-key="${p.key}" style="font-size:11px;padding:7px 3px;${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
           </div>
 
           <!-- 販売価格 -->
@@ -1432,7 +1401,7 @@ const App = (() => {
     actionBtn.className='header-btn-group';
     actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
     actionBtn.onclick=null;
-    actionBtn.innerHTML=`<button class="hbg-btn" onclick="App.navigate('sale-form',{},'売上を記録')">＋</button><button class="hbg-btn" onclick="App._salesSettingsSheet()" style="font-size:18px;letter-spacing:1px;">⋯</button>`;
+    actionBtn.innerHTML=`<button class="hbg-btn" onclick="location.reload()" style="font-size:13px;font-weight:600;">更新</button><button class="hbg-btn" onclick="App.navigate('sale-form',{},'売上を記録')">＋</button><button class="hbg-btn" onclick="App._salesSettingsSheet()" style="font-size:18px;letter-spacing:1px;">⋯</button>`;
 
     // 状態変数
     let filterStatus=_salesFilterStatus, sortMode='date', searchQ='';
@@ -2155,7 +2124,7 @@ const App = (() => {
     <div class="page-pad" style="background:var(--gray-light);">
       <div class="section-hd">プラットフォーム</div>
       <div class="platform-grid">
-        ${PLATFORMS.map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-platform="${p.key}" onclick="App._selectPlatformSale('${p.key}')" style="${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
+        ${PLATFORMS.filter(p=>!p.hidden).map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-platform="${p.key}" onclick="App._selectPlatformSale('${p.key}')" style="${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
       </div>
       <div class="form-group">
         <div class="form-row">
@@ -2598,14 +2567,15 @@ const App = (() => {
       const body=document.getElementById('__pf-list');if(!body)return;
       body.innerHTML=PLATFORMS.map((p,i)=>`
         <div class="pf-row" data-key="${p.key}" draggable="true"
-          style="display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--gray-border);background:var(--white);gap:8px;"
+          style="display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--gray-border);background:${p.hidden?'var(--gray-light)':'var(--white)'};gap:8px;opacity:${p.hidden?'0.6':'1'};"
           oncontextmenu="App._showPlatformMoveMenu('${p.key}',event);event.preventDefault();">
           <div class="drag-handle">⠿</div>
           <div style="width:32px;height:32px;border-radius:8px;background:${p.color};flex-shrink:0;"></div>
           <div style="flex:1;min-width:0;">
-            <div style="font-size:14px;font-weight:600;">${esc(p.name)}</div>
+            <div style="font-size:14px;font-weight:600;">${esc(p.name)}${p.hidden?'<span style="font-size:11px;color:var(--gray);margin-left:6px;">非表示</span>':''}</div>
             <div style="font-size:12px;color:var(--text-secondary);">手数料: ${p.feeRate}%</div>
           </div>
+          <button style="color:${p.hidden?'var(--success)':'var(--text-secondary)'};font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._togglePlatformHidden('${p.key}')">${p.hidden?'表示':'非表示'}</button>
           <button style="color:var(--primary);font-size:13px;font-weight:500;padding:6px 10px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._showPlatformEditDialog('${p.key}')">編集</button>
           ${i>=DEFAULT_PLATFORMS.length-1?`<button style="color:var(--danger);font-size:13px;padding:6px 8px;" onclick="App._deletePlatform('${p.key}')">削除</button>`:''}
         </div>`).join('');
@@ -2698,6 +2668,15 @@ const App = (() => {
     PLATFORMS=PLATFORMS.filter(p=>p.key!==key);
     await db.put('settings',{key:'platforms',value:PLATFORMS});
     toast('削除しました');App._pfRefresh?.();
+  }
+
+  async function _togglePlatformHidden(key){
+    const idx=PLATFORMS.findIndex(p=>p.key===key);
+    if(idx<0)return;
+    PLATFORMS[idx]={...PLATFORMS[idx],hidden:!PLATFORMS[idx].hidden};
+    await db.put('settings',{key:'platforms',value:PLATFORMS});
+    toast(PLATFORMS[idx].hidden?'非表示にしました':'表示に戻しました');
+    App._pfRefresh?.();
   }
 
   async function _resetPlatforms(){
@@ -2864,7 +2843,7 @@ const App = (() => {
     _completeFromDetail:()=>{}, _showStatusPopupSale:()=>{}, _deleteSale:()=>{},
     _setStatus:()=>{}, _showStatusPopup:()=>{},
     _toggleHidden:()=>{},
-    _showPlatformEditDialog, _savePlatform, _deletePlatform, _resetPlatforms, _pfRefresh:null,
+    _showPlatformEditDialog, _savePlatform, _deletePlatform, _resetPlatforms, _togglePlatformHidden, _pfRefresh:null,
     _showPlatformMoveMenu:()=>{},
     _salesSetView:()=>{}, _salesSettingsSheet:()=>{},
     _exportSalesCSV,
@@ -2873,7 +2852,7 @@ const App = (() => {
     _obSelShipping:()=>{},
     _deleteJanCode:()=>{},
     _anaTab:()=>{}, _anaNav:()=>{}, _anaRkSort:()=>{}, _anaRkPeriod:()=>{},
-    _anaPfPeriod:()=>{}, _anaInvDays:()=>{}, _anaInvToggle:()=>{},
+    _anaPfPeriod:()=>{},
     _exportListingsCSV, _csvByPeriod,
     _editShipping:()=>{}, _resetShipping:async()=>{
       const ok=await confirmDialog('送料プリセットをデフォルトに戻しますか？');if(!ok)return;
