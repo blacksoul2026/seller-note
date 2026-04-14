@@ -9,8 +9,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="セラーノート">
   <meta name="theme-color" content="#FFFFFF">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260414">
 </head>
 <body>
   <!-- 起動中 / ログイン画面 -->
@@ -80,10 +83,33 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260414"></script>
   <script>
+    // バージョンチェック：新バージョン検出時に強制リロード
+    fetch('./version.json?_=' + Date.now(), {cache: 'no-store'})
+      .then(r => r.json())
+      .then(d => {
+        const old = localStorage.getItem('sn_ver');
+        localStorage.setItem('sn_ver', d.v);
+        if (old && old !== d.v) { location.reload(true); }
+      }).catch(() => {});
+
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.update(); // 毎回最新のSWを確認
+        reg.addEventListener('updatefound', () => {
+          const nw = reg.installing;
+          nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+              location.reload(true);
+            }
+          });
+        });
+      }).catch(() => {});
+      let _r = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!_r) { _r = true; location.reload(true); }
+      });
     }
 
     // プルトゥリフレッシュ（下に引っ張ったら更新）
