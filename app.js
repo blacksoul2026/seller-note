@@ -409,7 +409,7 @@ const App = (() => {
       }
     }
 
-    const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'inventory',l:'在庫判断'},{k:'platform',l:'PF別'}];
+    const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'platform',l:'PF別'}];
     main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
     renderContent();
 
