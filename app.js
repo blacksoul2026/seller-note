@@ -303,8 +303,7 @@ const App = (() => {
   // HOME
   // =====================================================================
   async function pgHome(main,actionBtn) {
-    actionBtn.className='header-btn pill-btn'; actionBtn.textContent='更新'; actionBtn.classList.remove('hidden');
-    actionBtn.onclick=()=>location.reload();
+    // 分析ページはヘッダー更新ボタンなし（プルトゥリフレッシュで代替）
     const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
     const completedL=listings.filter(l=>l.status==='completed');
     const now=new Date();
@@ -365,7 +364,7 @@ const App = (() => {
         else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
         ranked=ranked.slice(0,30);
         const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'利益'},{k:'sales',l:'売上'},{k:'margin',l:'利益率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
-        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photo||'';const thumb=photo?`<img src="${photo}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;">`:`<div style="width:36px;height:36px;border-radius:4px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
+        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photo||'';const thumb=photo?`<img src="${photo}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">`:`<div style="width:48px;height:48px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
         body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='platform'){
@@ -382,6 +381,34 @@ const App = (() => {
     const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'platform',l:'PF別'}];
     main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
     renderContent();
+
+    // ===== プルトゥリフレッシュ（分析ページのみ）=====
+    {
+      const mainEl=document.getElementById('main');
+      let _ptrSY=0,_ptrReady=false,_ptrEl=null;
+      const _ptrShow=(txt)=>{
+        if(!_ptrEl){
+          _ptrEl=document.createElement('div');
+          _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
+          document.body.appendChild(_ptrEl);
+        }
+        _ptrEl.textContent=txt;
+      };
+      const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
+      mainEl.addEventListener('touchstart',e=>{
+        if(mainEl.scrollTop<=0)_ptrSY=e.touches[0].clientY;
+      },{passive:true});
+      mainEl.addEventListener('touchmove',e=>{
+        if(mainEl.scrollTop>0)return;
+        const dy=e.touches[0].clientY-_ptrSY;
+        if(dy>12){_ptrShow(dy>65?'↑ 離すと更新':'↓ 引っ張って更新');_ptrReady=dy>65;}
+        else{_ptrHide();_ptrReady=false;}
+      },{passive:true});
+      mainEl.addEventListener('touchend',()=>{
+        _ptrHide();
+        if(_ptrReady){_ptrReady=false;setTimeout(()=>location.reload(),80);}
+      },{passive:true});
+    }
 
     App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
     App._anaNav=(type,dir)=>{
@@ -985,8 +1012,8 @@ const App = (() => {
         <div class="form-row" style="align-items:flex-start;padding-top:8px;">
           <label class="form-label" style="padding-top:4px;">商品説明</label>
           <div class="form-input-wrap">
-            <textarea class="form-textarea" id="f-desc" placeholder="出品説明文など" oninput="document.getElementById('f-desc-cnt').textContent=this.value.length+'文字'">${esc(product?.description||'')}</textarea>
-            <div class="char-cnt" id="f-desc-cnt">${(product?.description||'').length}文字</div>
+            <textarea class="form-textarea" id="f-desc" placeholder="出品説明文など（最大1000文字）" style="min-height:220px;" oninput="var n=this.value.length;var el=document.getElementById('f-desc-cnt');el.textContent=n+'/1000文字';el.style.color=n>900?'var(--danger)':'var(--text-secondary)'">${esc(product?.description||'')}</textarea>
+            <div class="char-cnt" id="f-desc-cnt" style="font-size:13px;color:${(product?.description||'').length>900?'var(--danger)':'var(--text-secondary)'};">${(product?.description||'').length}/1000文字</div>
           </div>
         </div>
         <div class="form-row" style="align-items:flex-start;padding-top:8px;">
@@ -1529,7 +1556,7 @@ const App = (() => {
       const thumb=l.photo
         ?`<img src="${l.photo}" style="width:100%;height:100%;object-fit:cover;">`
         :`<span style="font-size:18px;">📦</span>`;
-      const codeLine=l.productCode?`<div style="font-size:13px;color:var(--text-secondary);font-weight:600;margin-top:1px;white-space:nowrap;">${esc(l.productCode)}</div>`:'';
+      const codeLine=l.productCode?`<div style="font-size:15px;color:var(--text);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(l.productCode)}</div>`:'';
       const memoRow=l.memo?`<div style="font-size:11px;color:var(--text-secondary);padding:3px 0 0;border-top:1px solid var(--gray-border);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">📝 ${esc(l.memo)}</div>`:'';
       const onClickHandler=`if(this.closest('.sli-wrap').dataset.swiped){this.style.transition='transform 0.2s';this.style.transform='translateX(0)';delete this.closest('.sli-wrap').dataset.swiped;return;}App.navigate('sale-detail',{id:'${l.id}'},'売上詳細')`;
 
@@ -2297,13 +2324,24 @@ const App = (() => {
       container.innerHTML=SHIPPING_SHORTCUTS.length===0
         ?`<div class="empty-state"><div class="empty-icon">✉️</div><p>送料プリセットがありません</p></div>`
         :SHIPPING_SHORTCUTS.map((s,i)=>`
-        <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--gray-border);gap:12px;cursor:pointer;" onclick="App._editShipping(${i})">
-          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">${esc(s.label)}</div><div style="font-size:12px;color:var(--text-secondary);">${s.price>0?yen(s.price):'送料込み（¥0）'}</div></div>
-          <span style="color:#BDBDBD;font-size:18px;">›</span>
+        <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid var(--gray-border);gap:10px;background:var(--white);">
+          <div style="flex:1;cursor:pointer;" onclick="App._editShipping(${i})">
+            <div style="font-size:15px;font-weight:500;">${esc(s.label)}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">${s.price>0?yen(s.price):'送料込み（¥0）'}</div>
+          </div>
+          <button style="flex-shrink:0;color:var(--danger);font-size:12px;font-weight:600;padding:6px 10px;border:1px solid var(--danger);border-radius:8px;background:transparent;white-space:nowrap;" onclick="App._deleteShortcut(${i})">削除</button>
+          <span style="color:#BDBDBD;font-size:18px;cursor:pointer;" onclick="App._editShipping(${i})">›</span>
         </div>`).join('');
     }
 
     App._editShipping=(idx)=>_showShippingEditDialog(idx);
+    App._deleteShortcut=async idx=>{
+      const ok=await confirmDialog('この送料プリセットを削除しますか？','削除','btn-danger');
+      if(!ok)return;
+      SHIPPING_SHORTCUTS.splice(idx,1);
+      await saveShortcuts();
+      renderList();
+    };
 
     main.innerHTML=`
     <div class="page-pad" style="background:var(--gray-light);">
@@ -2576,8 +2614,8 @@ const App = (() => {
             <div style="font-size:12px;color:var(--text-secondary);">手数料: ${p.feeRate}%</div>
           </div>
           <button style="color:${p.hidden?'var(--success)':'var(--text-secondary)'};font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._togglePlatformHidden('${p.key}')">${p.hidden?'表示':'非表示'}</button>
-          <button style="color:var(--primary);font-size:13px;font-weight:500;padding:6px 10px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._showPlatformEditDialog('${p.key}')">編集</button>
-          ${i>=DEFAULT_PLATFORMS.length-1?`<button style="color:var(--danger);font-size:13px;padding:6px 8px;" onclick="App._deletePlatform('${p.key}')">削除</button>`:''}
+          <button style="color:var(--primary);font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._showPlatformEditDialog('${p.key}')">編集</button>
+          <button style="color:var(--danger);font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--danger);border-radius:8px;" onclick="App._deletePlatform('${p.key}')">削除</button>
         </div>`).join('');
       setupPlatformDrag();
     }
