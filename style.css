@@ -1335,3 +1335,7 @@ img { max-width: 100%; display: block; }
 .prod-status-active { background: #E8F5E9; color: #388E3C; }
 .prod-status-paused { background: #FFF3E0; color: #F57C00; }
 .prod-status-discontinued { background: #F5F5F5; color: #757575; }
+html,
+body {
+  overscroll-behavior-y: contain;
+}
