@@ -382,21 +382,23 @@ const App = (() => {
     main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
     renderContent();
 
-    // ===== プルトゥリフレッシュ（分析ページのみ）=====
+     // ===== プルトゥリフレッシュ（分析ページのみ）=====
     {
-     const mainEl=document.getElementById('main');
-let _ptrSY=0,_ptrReady=false,_ptrEl=null;
+      const mainEl=document.getElementById('main');
+      let _ptrSY=0,_ptrReady=false,_ptrEl=null;
 
-const _ptrShow=(txt)=>{
-  if(!_ptrEl){
-    _ptrEl=document.createElement('div');
-    _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
-    document.body.appendChild(_ptrEl);
-  }
-  _ptrEl.textContent=txt;
-};
+      const _ptrShow=(txt)=>{
+        if(!_ptrEl){
+          _ptrEl=document.createElement('div');
+          _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
+          document.body.appendChild(_ptrEl);
+        }
+        _ptrEl.textContent=txt;
+      };
 
-const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
+      const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
+    }
+
     App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
     App._anaNav=(type,dir)=>{
       if(type==='m'){mMonth+=dir;if(mMonth<0){mMonth=11;mYear--;}if(mMonth>11){mMonth=0;mYear++;}}
@@ -408,6 +410,7 @@ const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
     App._anaRkSort=s=>{rkSort=s;renderContent();};
     App._anaRkPeriod=p=>{rkPeriod=p;renderContent();};
     App._anaPfPeriod=p=>{pfPeriod=p;renderContent();};
+  }
   
 
   // =====================================================================
