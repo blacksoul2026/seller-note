@@ -408,7 +408,7 @@ const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
     App._anaRkSort=s=>{rkSort=s;renderContent();};
     App._anaRkPeriod=p=>{rkPeriod=p;renderContent();};
     App._anaPfPeriod=p=>{pfPeriod=p;renderContent();};
-  }
+  
 
   // =====================================================================
   // PRODUCT MASTER LIST（グリッド + 並び替え）
