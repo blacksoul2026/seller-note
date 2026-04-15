@@ -384,31 +384,21 @@ const App = (() => {
 
     // ===== プルトゥリフレッシュ（分析ページのみ）=====
     {
-      const mainEl=document.getElementById('main');
-      let _ptrSY=0,_ptrReady=false,_ptrEl=null;
-      const _ptrShow=(txt)=>{
-        if(!_ptrEl){
-          _ptrEl=document.createElement('div');
-          _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
-          document.body.appendChild(_ptrEl);
-        }
-        _ptrEl.textContent=txt;
-      };
-      const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
-      mainEl.addEventListener('touchstart',e=>{
-        if(mainEl.scrollTop<=0)_ptrSY=e.touches[0].clientY;
-      },{passive:true});
-      mainEl.addEventListener('touchmove',e=>{
-        if(mainEl.scrollTop>0)return;
-        const dy=e.touches[0].clientY-_ptrSY;
-        if(dy>12){_ptrShow(dy>65?'↑ 離すと更新':'↓ 引っ張って更新');_ptrReady=dy>65;}
-        else{_ptrHide();_ptrReady=false;}
-      },{passive:true});
-      mainEl.addEventListener('touchend',()=>{
-        _ptrHide();
-        if(_ptrReady){_ptrReady=false;setTimeout(()=>location.reload(),80);}
-      },{passive:true});
-    }
+     const mainEl=document.getElementById('main');
+let _ptrSY=0,_ptrReady=false,_ptrEl=null;
+
+const _ptrShow=(txt)=>{
+  if(!_ptrEl){
+    _ptrEl=document.createElement('div');
+    _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
+    document.body.appendChild(_ptrEl);
+  }
+  _ptrEl.textContent=txt;
+};
+
+const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
+
+App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
 
     App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
     App._anaNav=(type,dir)=>{
