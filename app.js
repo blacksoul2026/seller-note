@@ -232,6 +232,8 @@ const App = (() => {
   let _salesItemMode = 'simple';     // 売上管理表の表示形式を永続化
   let _salesFilterStatus = 'active'; // 売上管理表のフィルタを永続化
   let _salesViewMode = 'list';       // 売上管理表のビューモードを永続化
+  let _salesSortMode = 'date';       // 売上管理表の並び替えを永続化
+  let _lastTab = 'home';             // 前回のタブを永続化
   let JAN_CODES = [];                // JANコードリスト
 
   const TAB_TITLES = {home:'分析',sales:'売上管理表',products:'商品マスタ',settings:'設定'};
@@ -239,6 +241,8 @@ const App = (() => {
   // ===== ROUTER =====
   async function switchTab(tab) {
     currentTab = tab;
+    _lastTab = tab;
+    db.put('settings', {key:'lastTab', value:tab}).catch(()=>{});
     // タブの初期ページもpageStackに積む（戻るボタン制御のため）
     pageStack = [{page:tab, params:{}, title:TAB_TITLES[tab]||tab}];
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
@@ -339,7 +343,19 @@ const App = (() => {
 
       if(tab==='monthly'){
         const s=cs(fbm(completedL,mYear,mMonth));
-        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
+        // 直近6か月の利益棒グラフ
+        const chartData=[];
+        for(let i=5;i>=0;i--){let y=mYear,m=mMonth-i;while(m<0){m+=12;y--;}chartData.push({y,m,profit:cs(fbm(completedL,y,m)).profit});}
+        const maxAbs=Math.max(...chartData.map(d=>Math.abs(d.profit)),1);
+        const chartBars=chartData.map(d=>{
+          const isCur=d.y===mYear&&d.m===mMonth;
+          const neg=d.profit<0;
+          const pct=Math.round(Math.abs(d.profit)/maxAbs*100);
+          const barH=`${Math.max(pct,2)}%`;
+          return `<div class="pmc-col${isCur?' cur':''}"><div class="pmc-bar-area"><div class="pmc-bar${neg?' neg':''}" style="height:${barH};"></div></div><div class="pmc-lbl">${MO[d.m].replace('月','')}</div></div>`;
+        }).join('');
+        const chartHtml=`<div class="pmc-wrap"><div class="pmc-title">直近6か月の利益</div><div class="pmc-chart">${chartBars}</div></div>`;
+        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${chartHtml}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
 
       }else if(tab==='yearly'){
         const s=cs(fby(completedL,aYear));
@@ -421,7 +437,7 @@ const App = (() => {
     actionBtn.className='header-btn-group';
     actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
     actionBtn.onclick=null;
-    actionBtn.innerHTML=`<button class="hbg-btn" onclick="location.reload()" style="font-size:13px;font-weight:600;">更新</button><button class="hbg-btn icon-pill" onclick="App.navigate('product-form',{},'商品を追加')" style="font-size:18px;">＋</button>`;
+    actionBtn.innerHTML=`<button class="hbg-btn icon-pill" onclick="App.navigate('product-form',{},'商品を追加')" style="font-size:18px;">＋</button>`;
     let searchQ='', showHidden=false, selectedCategory='all';
 
     function sortProducts(list) {
@@ -510,7 +526,7 @@ const App = (() => {
           <input class="search-input" id="__product-search" type="search" placeholder="商品名・管理番号で検索">
         </div>
       </div>
-      <div id="__category-bar" style="display:none;overflow-x:auto;white-space:nowrap;padding:8px 12px;background:var(--white);border-bottom:1px solid var(--gray-border);-webkit-overflow-scrolling:touch;scrollbar-width:none;"></div>
+      <div id="__category-bar" style="display:none;padding:6px 10px;background:var(--white);border-bottom:1px solid var(--gray-border);display:flex;flex-wrap:wrap;gap:5px;"></div>
       <div class="grid-action-bar">
         <span class="grid-count" id="__grid-count">${products.length}件</span>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -677,6 +693,15 @@ const App = (() => {
     LISTING_STATUSES.forEach(s=>{statusCounts[s.key]=0;});
     listings.forEach(l=>{if(statusCounts[l.status]!==undefined)statusCounts[l.status]++;});
 
+    // プラットフォーム別販売数
+    const pfCounts={};
+    done.forEach(l=>{const k=l.platform||'other';pfCounts[k]=(pfCounts[k]||0)+1;});
+    const pfEntries=Object.entries(pfCounts).sort((a,b)=>b[1]-a[1]);
+    const pfRows=pfEntries.map(([pfKey,cnt])=>{
+      const pf=getPlatform(pfKey);
+      return `<div class="detail-row"><span class="detail-label"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></span><span class="detail-value">${cnt}個</span></div>`;
+    }).join('')+(pfEntries.length>1?`<div class="detail-row" style="border-top:1px solid var(--gray-border);"><span class="detail-label" style="font-weight:600;">合計</span><span class="detail-value" style="font-weight:600;">${done.length}個</span></div>`:'');
+
     // 写真（スクエア表示 + 矢印ナビ）
     let photosHtml='';
     if(product.photos?.length){
@@ -756,6 +781,8 @@ const App = (() => {
         <div class="detail-row"><span class="detail-label">平均利益率</span><span class="detail-value">${avgRoi}%</span></div>
       </div>
 
+      ${pfRows?`<div class="section-hd">プラットフォーム別販売数</div><div class="detail-group">${pfRows}</div>`:''}
+
       <!-- 出品情報 -->
       <div class="section-hd">出品情報</div>
       <div class="detail-group">
@@ -774,7 +801,6 @@ const App = (() => {
 
       <!-- ボタン -->
       <div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
-        <button class="btn btn-primary btn-full" onclick="App.navigate('sale-form',{productId:'${id}',productName:${JSON.stringify(product.name)},purchasePrice:'${product.purchasePrice||0}'},'売上を記録')">売上を記録する</button>
         <button class="btn btn-outline-red btn-full" style="color:var(--danger);border-color:var(--danger);" onclick="App._deleteProduct('${id}')">削除</button>
       </div>
     </div>`;
@@ -1418,10 +1444,10 @@ const App = (() => {
     actionBtn.className='header-btn-group';
     actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
     actionBtn.onclick=null;
-    actionBtn.innerHTML=`<button class="hbg-btn" onclick="location.reload()" style="font-size:13px;font-weight:600;">更新</button><button class="hbg-btn" onclick="App.navigate('sale-form',{},'売上を記録')">＋</button><button class="hbg-btn" onclick="App._salesSettingsSheet()" style="font-size:18px;letter-spacing:1px;">⋯</button>`;
+    actionBtn.innerHTML=`<button class="hbg-btn" onclick="App.navigate('sale-form',{},'売上を記録')">＋</button><button class="hbg-btn" onclick="App._salesSettingsSheet()" style="font-size:18px;letter-spacing:1px;">⋯</button>`;
 
     // 状態変数
-    let filterStatus=_salesFilterStatus, sortMode='date', searchQ='';
+    let filterStatus=_salesFilterStatus, sortMode=_salesSortMode, searchQ='';
     let viewMode=_salesViewMode;
     let itemMode=_salesItemMode;    // モジュール変数から復元（画面移動後も維持）
     let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
@@ -1429,37 +1455,27 @@ const App = (() => {
 
     const FILTER_OPTS=[
       {key:'all',       label:'全て'},
-      {key:'active',    label:'発送待ち（未完了）'},
-      {key:'completed', label:'取引完了のみ'},
+      {key:'active',    label:'発送前（未完了）'},
+      {key:'completed', label:'取引完了'},
     ];
 
     const SORT_OPTS=[
-      {key:'date',          label:'売れた順（新しい順）'},
-      {key:'date_asc',      label:'売れた順（古い順）'},
-      {key:'platform',      label:'プラットフォーム順'},
-      {key:'updatedAt',     label:'更新日順（商品マスタ）'},
-      {key:'purchaseDate',  label:'仕入日順'},
-      {key:'completedDate', label:'取引完了日順'},
-      {key:'code_jp',       label:'あ順（管理番号）'},
-      {key:'code_en',       label:'A順（管理番号）'},
-      {key:'code_num',      label:'数字順（管理番号）'},
+      {key:'date',     label:'売れた順（新しい順）'},
+      {key:'date_asc', label:'売れた順（古い順）'},
+      {key:'platform', label:'プラットフォーム順'},
+      {key:'code_jp',  label:'あ順（管理番号）'},
+      {key:'code_an',  label:'A数字順（管理番号）'},
     ];
 
-    function _codeNum(l){
-      const m=(l.productCode||'').match(/\d+/);return m?Number(m[0]):Infinity;
-    }
     function sortList(list){
-      const collator=new Intl.Collator('ja',{sensitivity:'base'});
+      const collatorJa=new Intl.Collator('ja',{sensitivity:'base'});
+      const collatorAn=new Intl.Collator('en',{numeric:true,sensitivity:'base'});
       switch(sortMode){
-        case 'date':         return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
-        case 'date_asc':     return list.sort((a,b)=>new Date(a.saleDate||0)-new Date(b.saleDate||0)||a.createdAt-b.createdAt);
-        case 'updatedAt':    return list.sort((a,b)=>(productMap[b.productId]?.updatedAt||0)-(productMap[a.productId]?.updatedAt||0));
-        case 'purchaseDate': return list.sort((a,b)=>new Date(productMap[b.productId]?.purchaseDate||0)-new Date(productMap[a.productId]?.purchaseDate||0));
-        case 'completedDate':return list.sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0));
-        case 'code_jp':      return list.sort((a,b)=>collator.compare(a.productCode||'',b.productCode||''));
-        case 'code_en':      return list.sort((a,b)=>(a.productCode||'').localeCompare(b.productCode||'','en'));
-        case 'code_num':     return list.sort((a,b)=>_codeNum(a)-_codeNum(b));
-        default:             return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
+        case 'date':     return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
+        case 'date_asc': return list.sort((a,b)=>new Date(a.saleDate||0)-new Date(b.saleDate||0)||a.createdAt-b.createdAt);
+        case 'code_jp':  return list.sort((a,b)=>collatorJa.compare(a.productCode||'',b.productCode||''));
+        case 'code_an':  return list.sort((a,b)=>collatorAn.compare(a.productCode||'',b.productCode||''));
+        default:         return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
       }
     }
 
@@ -1672,7 +1688,7 @@ const App = (() => {
       const body=document.getElementById('__sales-body');if(!body)return;
       if(!list.length){
         body.innerHTML=filterStatus==='active'
-          ?`<div class="empty-state"><div class="empty-icon">🎉</div><p>発送待ちの商品はありません</p><small>全て完了しています</small></div>`
+          ?`<div class="empty-state"><div class="empty-icon">🎉</div><p>発送前の商品はありません</p><small>全て完了しています</small></div>`
           :`<div class="empty-state"><div class="empty-icon">💴</div><p>売上がありません</p></div>`;
         return;
       }
@@ -1863,7 +1879,7 @@ const App = (() => {
       document.body.appendChild(ov);
       ov.addEventListener('click',e=>{
         const btn=e.target.closest('.status-popup-item');
-        if(btn){sortMode=btn.dataset.key;setSortLabel();renderList();}
+        if(btn){sortMode=btn.dataset.key;_salesSortMode=sortMode;db.put('settings',{key:'salesSortMode',value:_salesSortMode});setSortLabel();renderList();}
         ov.remove();
       });
     });
@@ -2314,14 +2330,95 @@ const App = (() => {
       container.innerHTML=SHIPPING_SHORTCUTS.length===0
         ?`<div class="empty-state"><div class="empty-icon">✉️</div><p>送料プリセットがありません</p></div>`
         :SHIPPING_SHORTCUTS.map((s,i)=>`
-        <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid var(--gray-border);gap:10px;background:var(--white);">
+        <div class="sh-row" data-idx="${i}" draggable="true" style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid var(--gray-border);gap:10px;background:var(--white);">
+          <div class="drag-handle" style="flex-shrink:0;color:#BDBDBD;font-size:20px;cursor:grab;padding:0 4px;">⠿</div>
           <div style="flex:1;cursor:pointer;" onclick="App._editShipping(${i})">
             <div style="font-size:15px;font-weight:500;">${esc(s.label)}</div>
             <div style="font-size:12px;color:var(--text-secondary);">${s.price>0?yen(s.price):'送料込み（¥0）'}</div>
           </div>
-          <button style="flex-shrink:0;color:var(--danger);font-size:12px;font-weight:600;padding:6px 10px;border:1px solid var(--danger);border-radius:8px;background:transparent;white-space:nowrap;" onclick="App._deleteShortcut(${i})">削除</button>
-          <span style="color:#BDBDBD;font-size:18px;cursor:pointer;" onclick="App._editShipping(${i})">›</span>
+          <button style="flex-shrink:0;color:var(--text-secondary);font-size:12px;font-weight:600;padding:6px 10px;border:1px solid var(--gray-border);border-radius:8px;background:transparent;white-space:nowrap;" onclick="App._editShipping(${i})">編集</button>
         </div>`).join('');
+      setupShippingDrag();
+    }
+
+    function setupShippingDrag(){
+      const list=document.getElementById('__sh-list');if(!list)return;
+      let dragSrcIdx=null;
+      list.addEventListener('dragstart',e=>{
+        const row=e.target.closest('.sh-row[data-idx]');if(!row)return;
+        dragSrcIdx=parseInt(row.dataset.idx);
+        setTimeout(()=>row.classList.add('dragging'),0);
+        e.dataTransfer.effectAllowed='move';
+        e.dataTransfer.setData('text/plain',String(dragSrcIdx));
+      });
+      list.addEventListener('dragover',e=>{
+        e.preventDefault();e.dataTransfer.dropEffect='move';
+        const row=e.target.closest('.sh-row[data-idx]');
+        if(!row||parseInt(row.dataset.idx)===dragSrcIdx)return;
+        list.querySelectorAll('.sh-row').forEach(r=>r.classList.remove('drag-over'));
+        row.classList.add('drag-over');
+      });
+      list.addEventListener('dragleave',e=>{
+        const row=e.target.closest('.sh-row[data-idx]');if(row)row.classList.remove('drag-over');
+      });
+      list.addEventListener('drop',async e=>{
+        e.preventDefault();
+        const row=e.target.closest('.sh-row[data-idx]');if(!row||dragSrcIdx===null)return;
+        const toIdx=parseInt(row.dataset.idx);
+        if(toIdx===dragSrcIdx)return;
+        const item=SHIPPING_SHORTCUTS.splice(dragSrcIdx,1)[0];
+        SHIPPING_SHORTCUTS.splice(toIdx,0,item);
+        await saveShortcuts();renderList();
+      });
+      list.addEventListener('dragend',()=>{
+        list.querySelectorAll('.sh-row').forEach(r=>r.classList.remove('dragging','drag-over'));
+        dragSrcIdx=null;
+      });
+      // Mobile touch
+      let touchIdx=null,touchClone=null,touchTimer=null;
+      list.addEventListener('touchstart',e=>{
+        const row=e.target.closest('.sh-row[data-idx]');if(!row)return;
+        touchTimer=setTimeout(()=>{
+          touchIdx=parseInt(row.dataset.idx);
+          const rect=row.getBoundingClientRect();
+          touchClone=row.cloneNode(true);
+          Object.assign(touchClone.style,{position:'fixed',width:rect.width+'px',height:rect.height+'px',top:rect.top+'px',left:rect.left+'px',opacity:'0.85',border:'2px solid var(--primary)',zIndex:'9999',pointerEvents:'none',boxShadow:'0 6px 20px rgba(0,0,0,0.22)'});
+          document.body.appendChild(touchClone);row.style.opacity='0.3';if(navigator.vibrate)navigator.vibrate(40);
+        },430);
+      },{passive:true});
+      list.addEventListener('touchmove',e=>{
+        if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
+        if(touchIdx===null||!touchClone)return;
+        e.preventDefault();
+        const t=e.touches[0];
+        touchClone.style.top=(t.clientY-parseFloat(touchClone.style.height)/2)+'px';
+        touchClone.style.display='none';
+        const el=document.elementFromPoint(t.clientX,t.clientY);
+        touchClone.style.display='';
+        const over=el?.closest('.sh-row[data-idx]');
+        list.querySelectorAll('.sh-row').forEach(r=>r.classList.remove('drag-over'));
+        if(over&&parseInt(over.dataset.idx)!==touchIdx)over.classList.add('drag-over');
+      },{passive:false});
+      const endTouch=async e=>{
+        if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
+        const wasDragging=touchIdx!==null;
+        if(touchClone){touchClone.remove();touchClone=null;}
+        list.querySelectorAll('.sh-row').forEach(r=>{r.classList.remove('drag-over','dragging');r.style.opacity='';});
+        if(wasDragging&&e.changedTouches){
+          const t=e.changedTouches[0];
+          const el=document.elementFromPoint(t.clientX,t.clientY);
+          const over=el?.closest('.sh-row[data-idx]');
+          if(over&&parseInt(over.dataset.idx)!==touchIdx){
+            const toIdx=parseInt(over.dataset.idx);
+            const item=SHIPPING_SHORTCUTS.splice(touchIdx,1)[0];
+            SHIPPING_SHORTCUTS.splice(toIdx,0,item);
+            await saveShortcuts();renderList();
+          }
+        }
+        touchIdx=null;
+      };
+      list.addEventListener('touchend',endTouch,{passive:true});
+      list.addEventListener('touchcancel',endTouch,{passive:true});
     }
 
     App._editShipping=(idx)=>_showShippingEditDialog(idx);
@@ -2334,10 +2431,12 @@ const App = (() => {
     };
 
     main.innerHTML=`
-    <div class="page-pad" style="background:var(--gray-light);">
+    <div style="background:var(--gray-light);min-height:100%;">
       <div class="section-hd">送料プリセット一覧</div>
-      <div style="background:var(--white);" id="__sh-list"></div>
+      <div style="font-size:12px;color:var(--text-secondary);padding:6px 14px;">⠿ をドラッグまたは長押しで並び替え</div>
+      <div id="__sh-list"></div>
       <div style="padding:16px;"><button class="btn btn-outline-red btn-full btn-sm" onclick="App._resetShipping()">デフォルトに戻す</button></div>
+      <div style="height:80px;"></div>
     </div>`;
     renderList();
   }
@@ -2372,8 +2471,14 @@ const App = (() => {
               ${item.photo
                 ? `<img src="${item.photo}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;">`
                 : '<div style="width:52px;height:52px;border-radius:6px;background:var(--gray-light);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;">🏷</div>'}
-              <div style="flex:1;font-size:15px;font-weight:500;font-family:monospace;word-break:break-all;">${esc(item.number)}</div>
-              <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:22px;padding:4px 10px;cursor:pointer;flex-shrink:0;">✕</button>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:15px;font-weight:500;font-family:monospace;word-break:break-all;">${esc(item.number)}</div>
+                ${item.sku?`<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">SKU: ${esc(item.sku)}</div>`:''}
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
+                <button onclick="App._editJanCode('${item.id}')" style="background:var(--gray-light);border:none;border-radius:6px;color:var(--text);font-size:12px;padding:5px 10px;cursor:pointer;white-space:nowrap;">編集</button>
+                <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:20px;padding:2px 10px;cursor:pointer;">✕</button>
+              </div>
             </div>`).join('')}</div>`
         }
       </div>`;
@@ -2394,13 +2499,75 @@ const App = (() => {
       renderList();
     };
 
+    App._editJanCode = id => {
+      const item = JAN_CODES.find(j => j.id === id);
+      if (!item) return;
+      showEditDialog(item);
+    };
+
+    function showEditDialog(item) {
+      const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
+      ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
+        <h3 style="margin-bottom:16px;">JANコードを編集</h3>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">JANコード番号</div>
+          <input id="__jan-edit-num" type="tel" value="${esc(item.number)}" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">SKU / 商品コード（任意）</div>
+          <input id="__jan-edit-sku" type="text" value="${esc(item.sku||'')}" class="form-input" style="width:100%;font-size:15px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:20px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">写真（任意）</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:var(--gray-light);border:1px dashed var(--gray-border);border-radius:8px;padding:10px 16px;font-size:13px;color:var(--text-secondary);">
+              📷 写真を変更
+              <input type="file" accept="image/*" id="__jan-edit-photo" style="display:none;">
+            </label>
+            <div id="__jan-edit-thumb">${item.photo?`<img src="${item.photo}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;">`:''}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="__jan-edit-cancel" class="btn btn-gray btn-full">キャンセル</button>
+          <button id="__jan-edit-save" class="btn btn-primary btn-full">保存</button>
+        </div>
+      </div>`;
+      document.body.appendChild(ov);
+
+      let photoData = item.photo || null;
+
+      document.getElementById('__jan-edit-photo').addEventListener('change', async e => {
+        const f = e.target.files[0]; if (!f) return;
+        const b64 = await fileToBase64(f);
+        photoData = await resizeImage(b64, 400, 400);
+        document.getElementById('__jan-edit-thumb').innerHTML = `<img src="${photoData}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;">`;
+      });
+
+      document.getElementById('__jan-edit-save').onclick = async () => {
+        const num = document.getElementById('__jan-edit-num').value.trim();
+        if (!num) { toast('番号を入力してください'); return; }
+        const skuVal = document.getElementById('__jan-edit-sku').value.trim();
+        const idx = JAN_CODES.findIndex(j => j.id === item.id);
+        if (idx >= 0) JAN_CODES[idx] = {...JAN_CODES[idx], number: num, sku: skuVal, photo: photoData};
+        await db.put('settings', {key: 'janCodes', value: JAN_CODES});
+        toast('更新しました'); ov.remove(); renderList();
+      };
+      document.getElementById('__jan-edit-cancel').onclick = () => ov.remove();
+      ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+      setTimeout(() => document.getElementById('__jan-edit-num')?.focus(), 100);
+    }
+
     function showAddDialog() {
       const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
       ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
         <h3 style="margin-bottom:16px;">JANコードを追加</h3>
         <div style="margin-bottom:12px;">
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">番号</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">JANコード番号</div>
           <input id="__jan-num-input" type="tel" placeholder="例: 4901234567890" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">SKU / 商品コード（任意）</div>
+          <input id="__jan-sku-input" type="text" placeholder="例: C-123" class="form-input" style="width:100%;font-size:15px;box-sizing:border-box;" autocomplete="off">
         </div>
         <div style="margin-bottom:20px;">
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">写真（任意）</div>
@@ -2431,7 +2598,8 @@ const App = (() => {
       document.getElementById('__jan-save-btn').onclick = async () => {
         const num = document.getElementById('__jan-num-input').value.trim();
         if (!num) { toast('番号を入力してください'); return; }
-        JAN_CODES.push({id: uid(), number: num, photo: photoData, createdAt: Date.now()});
+        const skuVal = document.getElementById('__jan-sku-input')?.value?.trim()||'';
+        JAN_CODES.push({id: uid(), number: num, sku: skuVal, photo: photoData, createdAt: Date.now()});
         await db.put('settings', {key: 'janCodes', value: JAN_CODES});
         toast('追加しました'); ov.remove(); renderList();
       };
@@ -2611,10 +2779,11 @@ const App = (() => {
     }
 
     main.innerHTML=`
-    <div class="page-pad" style="background:var(--gray-light);">
+    <div style="background:var(--gray-light);min-height:100%;">
       <div style="padding:10px 16px;font-size:13px;color:var(--text-secondary);">ドラッグ（⠿）または長押し・右クリックで並び替え。プラットフォームの順番は売上管理表のプラットフォーム別表示に反映されます。</div>
       <div id="__pf-list"></div>
       <div style="padding:12px;"><button class="btn btn-outline-red btn-full" onclick="App._resetPlatforms()">デフォルトに戻す</button></div>
+      <div style="height:80px;"></div>
     </div>`;
     renderList();
     App._pfRefresh=renderList;
@@ -2854,7 +3023,12 @@ const App = (() => {
     // DBからJANコードを読み込む
     const savedJan=await db.get('settings','janCodes');
     if(savedJan?.value) JAN_CODES=savedJan.value;
-    await switchTab('home');
+    // DBから売上ソートモードを読み込む
+    const savedSortMode=await db.get('settings','salesSortMode');
+    if(savedSortMode?.value) _salesSortMode=savedSortMode.value;
+    // 前回のタブを読み込む
+    const savedTab=await db.get('settings','lastTab');
+    await switchTab(savedTab?.value||'home');
   }
 
   return {
