@@ -232,6 +232,8 @@ const App = (() => {
   let _salesItemMode = 'simple';     // 売上管理表の表示形式を永続化
   let _salesFilterStatus = 'active'; // 売上管理表のフィルタを永続化
   let _salesViewMode = 'list';       // 売上管理表のビューモードを永続化
+  let _salesSortMode = 'date';       // 売上管理表の並び替えを永続化
+  let _lastTab = 'home';             // 前回のタブを永続化
   let JAN_CODES = [];                // JANコードリスト
 
   const TAB_TITLES = {home:'分析',sales:'売上管理表',products:'商品マスタ',settings:'設定'};
@@ -239,6 +241,8 @@ const App = (() => {
   // ===== ROUTER =====
   async function switchTab(tab) {
     currentTab = tab;
+    _lastTab = tab;
+    db.put('settings', {key:'lastTab', value:tab}).catch(()=>{});
     // タブの初期ページもpageStackに積む（戻るボタン制御のため）
     pageStack = [{page:tab, params:{}, title:TAB_TITLES[tab]||tab}];
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
@@ -274,7 +278,7 @@ const App = (() => {
     actionBtn.className='header-btn hidden';
     actionBtn.onclick=null; actionBtn.textContent=''; actionBtn.innerHTML='';
     switch(page){
-      case 'home':       await pgHome(main); break;
+      case 'home':       await pgHome(main,actionBtn); break;
       case 'products':   await pgProducts(main,actionBtn); break;
       case 'product-detail': await pgProductDetail(main,params,actionBtn); break;
       case 'product-form':
@@ -302,7 +306,8 @@ const App = (() => {
   // =====================================================================
   // HOME
   // =====================================================================
-  async function pgHome(main) {
+  async function pgHome(main,actionBtn) {
+    // 分析ページはヘッダー更新ボタンなし（プルトゥリフレッシュで代替）
     const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
     const completedL=listings.filter(l=>l.status==='completed');
     const now=new Date();
@@ -310,7 +315,6 @@ const App = (() => {
     let mYear=now.getFullYear(),mMonth=now.getMonth();
     let aYear=now.getFullYear();
     let rkPeriod='month',rkYear=now.getFullYear(),rkMonth=now.getMonth(),rkSort='qty';
-    let invDays=30,invShowPaused=false,invShowDiscontinued=false;
     let pfPeriod='month',pfYear=now.getFullYear(),pfMonth=now.getMonth();
 
     const MO=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
@@ -364,39 +368,8 @@ const App = (() => {
         else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
         ranked=ranked.slice(0,30);
         const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'利益'},{k:'sales',l:'売上'},{k:'margin',l:'利益率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
-        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td style="font-size:12px;">${esc(item.name)}${item.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(item.code)}</div>`:''}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(item.lastDate)}</td></tr>`;}).join('');
-        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th>商品名</th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th><th class="n">最終日</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
-
-      }else if(tab==='inventory'){
-        const cutMs=Date.now()-invDays*86400000;
-        const d30Ms=Date.now()-30*86400000;
-        const smap={};
-        completedL.forEach(l=>{
-          if(!smap[l.productId])smap[l.productId]={qty30:0,qtyAll:0,sales:0,profit:0,lastDate:null};
-          smap[l.productId].qtyAll++;
-          smap[l.productId].sales+=Number(l.salePrice)||0;
-          smap[l.productId].profit+=Number(l.profit)||0;
-          if(!smap[l.productId].lastDate||l.saleDate>smap[l.productId].lastDate)smap[l.productId].lastDate=l.saleDate;
-          if(l.saleDate&&new Date(l.saleDate).getTime()>=d30Ms)smap[l.productId].qty30++;
-        });
-        const prods=products.filter(p=>{
-          const st=p.productStatus||'active';
-          if(st==='paused'&&!invShowPaused)return false;
-          if(st==='discontinued'&&!invShowDiscontinued)return false;
-          return true;
-        });
-        const ann=prods.map(p=>{
-          const s=smap[p.id]||{qty30:0,qtyAll:0,sales:0,profit:0,lastDate:null};
-          const stk=p.stockCount||0,pst=p.productStatus||'active';
-          const lastMs=s.lastDate?new Date(s.lastDate).getTime():0;
-          const labels=[];
-          if(stk===0&&pst==='active')labels.push({l:'在庫切れ',c:'var(--danger)'});
-          if(stk>0&&stk<=3&&s.qty30>0)labels.push({l:'補充候補',c:'#2196F3'});
-          if(s.qtyAll>0&&lastMs<cutMs)labels.push({l:'長期未販売',c:'#FF9800'});
-          return {p,s,labels};
-        });
-        const rows=ann.map(({p,s,labels})=>`<tr><td style="font-size:12px;">${esc(p.name)}${p.code?`<div style="font-size:10px;color:var(--text-secondary);">${esc(p.code)}</div>`:''}${labels.length?`<div style="margin-top:2px;">${labels.map(l=>`<span class="inv-lbl" style="background:${l.c}20;color:${l.c};">${l.l}</span>`).join('')}</div>`:''}</td><td class="n">${p.stockCount||0}</td><td class="n">${s.qty30}</td><td class="n">${s.qtyAll}</td><td class="n" style="font-size:11px;white-space:nowrap;">${fmtDate(s.lastDate)||'−'}</td><td class="n">${yen(s.sales)}</td><td class="n" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</td></tr>`).join('');
-        body.innerHTML=`<div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--white);border-bottom:1px solid var(--gray-border);"><span style="font-size:11px;color:var(--text-secondary);">長期未販売:</span>${[30,60,90].map(d=>`<button class="ana-sbtn${invDays===d?' ana-sbtn-on':''}" onclick="App._anaInvDays(${d})">${d}日以上</button>`).join('')}<div style="margin-left:auto;display:flex;gap:4px;"><button class="ana-sbtn${invShowPaused?' ana-sbtn-on':''}" onclick="App._anaInvToggle('paused')">休止も表示</button><button class="ana-sbtn${invShowDiscontinued?' ana-sbtn-on':''}" onclick="App._anaInvToggle('disc')">廃番も表示</button></div></div>${ann.length===0?'<div class="ana-empty">表示する商品がありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>商品名</th><th class="n">在庫</th><th class="n">30日</th><th class="n">累計</th><th class="n">最終日</th><th class="n">売上</th><th class="n">粗利</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photo||'';const thumb=photo?`<img src="${photo}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">`:`<div style="width:48px;height:48px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='platform'){
         const list=pfPeriod==='month'?fbm(completedL,pfYear,pfMonth):fby(completedL,pfYear);
@@ -409,9 +382,26 @@ const App = (() => {
       }
     }
 
-    const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'inventory',l:'在庫判断'},{k:'platform',l:'PF別'}];
+    const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'platform',l:'PF別'}];
     main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
     renderContent();
+
+     // ===== プルトゥリフレッシュ（分析ページのみ）=====
+    {
+      const mainEl=document.getElementById('main');
+      let _ptrSY=0,_ptrReady=false,_ptrEl=null;
+
+      const _ptrShow=(txt)=>{
+        if(!_ptrEl){
+          _ptrEl=document.createElement('div');
+          _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
+          document.body.appendChild(_ptrEl);
+        }
+        _ptrEl.textContent=txt;
+      };
+
+      const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
+    }
 
     App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
     App._anaNav=(type,dir)=>{
@@ -424,18 +414,18 @@ const App = (() => {
     App._anaRkSort=s=>{rkSort=s;renderContent();};
     App._anaRkPeriod=p=>{rkPeriod=p;renderContent();};
     App._anaPfPeriod=p=>{pfPeriod=p;renderContent();};
-    App._anaInvDays=d=>{invDays=d;renderContent();};
-    App._anaInvToggle=w=>{if(w==='paused')invShowPaused=!invShowPaused;else invShowDiscontinued=!invShowDiscontinued;renderContent();};
   }
+  
 
   // =====================================================================
   // PRODUCT MASTER LIST（グリッド + 並び替え）
   // =====================================================================
   async function pgProducts(main,actionBtn) {
     const products=await db.getAll('products');
-    actionBtn.className='header-btn icon-pill';
-    actionBtn.innerHTML='<span style="font-size:18px;">＋</span>';
-    actionBtn.onclick=()=>navigate('product-form',{},'商品を追加');
+    actionBtn.className='header-btn-group';
+    actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
+    actionBtn.onclick=null;
+    actionBtn.innerHTML=`<button class="hbg-btn icon-pill" onclick="App.navigate('product-form',{},'商品を追加')" style="font-size:18px;">＋</button>`;
     let searchQ='', showHidden=false, selectedCategory='all';
 
     function sortProducts(list) {
@@ -524,7 +514,7 @@ const App = (() => {
           <input class="search-input" id="__product-search" type="search" placeholder="商品名・管理番号で検索">
         </div>
       </div>
-      <div id="__category-bar" style="display:none;overflow-x:auto;white-space:nowrap;padding:8px 12px;background:var(--white);border-bottom:1px solid var(--gray-border);-webkit-overflow-scrolling:touch;scrollbar-width:none;"></div>
+      <div id="__category-bar" style="display:none;padding:6px 10px;background:var(--white);border-bottom:1px solid var(--gray-border);display:flex;flex-wrap:wrap;gap:5px;"></div>
       <div class="grid-action-bar">
         <span class="grid-count" id="__grid-count">${products.length}件</span>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -691,6 +681,14 @@ const App = (() => {
     LISTING_STATUSES.forEach(s=>{statusCounts[s.key]=0;});
     listings.forEach(l=>{if(statusCounts[l.status]!==undefined)statusCounts[l.status]++;});
 
+    // プラットフォーム別販売数
+    const pfCounts={};
+    done.forEach(l=>{const k=l.platform||'other';pfCounts[k]=(pfCounts[k]||0)+1;});
+    const pfRows=Object.entries(pfCounts).sort((a,b)=>b[1]-a[1]).map(([pfKey,cnt])=>{
+      const pf=getPlatform(pfKey);
+      return `<div class="detail-row"><span class="detail-label"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></span><span class="detail-value">${cnt}個</span></div>`;
+    }).join('');
+
     // 写真（スクエア表示 + 矢印ナビ）
     let photosHtml='';
     if(product.photos?.length){
@@ -770,6 +768,8 @@ const App = (() => {
         <div class="detail-row"><span class="detail-label">平均利益率</span><span class="detail-value">${avgRoi}%</span></div>
       </div>
 
+      ${pfRows?`<div class="section-hd">プラットフォーム別販売数</div><div class="detail-group">${pfRows}</div>`:''}
+
       <!-- 出品情報 -->
       <div class="section-hd">出品情報</div>
       <div class="detail-group">
@@ -788,7 +788,6 @@ const App = (() => {
 
       <!-- ボタン -->
       <div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
-        <button class="btn btn-primary btn-full" onclick="App.navigate('sale-form',{productId:'${id}',productName:${JSON.stringify(product.name)},purchasePrice:'${product.purchasePrice||0}'},'売上を記録')">売上を記録する</button>
         <button class="btn btn-outline-red btn-full" style="color:var(--danger);border-color:var(--danger);" onclick="App._deleteProduct('${id}')">削除</button>
       </div>
     </div>`;
@@ -1016,8 +1015,8 @@ const App = (() => {
         <div class="form-row" style="align-items:flex-start;padding-top:8px;">
           <label class="form-label" style="padding-top:4px;">商品説明</label>
           <div class="form-input-wrap">
-            <textarea class="form-textarea" id="f-desc" placeholder="出品説明文など" oninput="document.getElementById('f-desc-cnt').textContent=this.value.length+'文字'">${esc(product?.description||'')}</textarea>
-            <div class="char-cnt" id="f-desc-cnt">${(product?.description||'').length}文字</div>
+            <textarea class="form-textarea" id="f-desc" placeholder="出品説明文など（最大1000文字）" style="min-height:220px;" oninput="var n=this.value.length;var el=document.getElementById('f-desc-cnt');el.textContent=n+'/1000文字';el.style.color=n>900?'var(--danger)':'var(--text-secondary)'">${esc(product?.description||'')}</textarea>
+            <div class="char-cnt" id="f-desc-cnt" style="font-size:13px;color:${(product?.description||'').length>900?'var(--danger)':'var(--text-secondary)'};">${(product?.description||'').length}/1000文字</div>
           </div>
         </div>
         <div class="form-row" style="align-items:flex-start;padding-top:8px;">
@@ -1166,7 +1165,7 @@ const App = (() => {
           <!-- プラットフォーム -->
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;font-weight:600;">プラットフォーム</div>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:14px;" id="__ob-platforms">
-            ${PLATFORMS.map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-key="${p.key}" style="font-size:11px;padding:7px 3px;${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
+            ${PLATFORMS.filter(p=>!p.hidden).map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-key="${p.key}" style="font-size:11px;padding:7px 3px;${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
           </div>
 
           <!-- 販売価格 -->
@@ -1435,7 +1434,7 @@ const App = (() => {
     actionBtn.innerHTML=`<button class="hbg-btn" onclick="App.navigate('sale-form',{},'売上を記録')">＋</button><button class="hbg-btn" onclick="App._salesSettingsSheet()" style="font-size:18px;letter-spacing:1px;">⋯</button>`;
 
     // 状態変数
-    let filterStatus=_salesFilterStatus, sortMode='date', searchQ='';
+    let filterStatus=_salesFilterStatus, sortMode=_salesSortMode, searchQ='';
     let viewMode=_salesViewMode;
     let itemMode=_salesItemMode;    // モジュール変数から復元（画面移動後も維持）
     let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
@@ -1443,37 +1442,27 @@ const App = (() => {
 
     const FILTER_OPTS=[
       {key:'all',       label:'全て'},
-      {key:'active',    label:'発送待ち（未完了）'},
-      {key:'completed', label:'取引完了のみ'},
+      {key:'active',    label:'発送前（未完了）'},
+      {key:'completed', label:'取引完了'},
     ];
 
     const SORT_OPTS=[
-      {key:'date',          label:'売れた順（新しい順）'},
-      {key:'date_asc',      label:'売れた順（古い順）'},
-      {key:'platform',      label:'プラットフォーム順'},
-      {key:'updatedAt',     label:'更新日順（商品マスタ）'},
-      {key:'purchaseDate',  label:'仕入日順'},
-      {key:'completedDate', label:'取引完了日順'},
-      {key:'code_jp',       label:'あ順（管理番号）'},
-      {key:'code_en',       label:'A順（管理番号）'},
-      {key:'code_num',      label:'数字順（管理番号）'},
+      {key:'date',     label:'売れた順（新しい順）'},
+      {key:'date_asc', label:'売れた順（古い順）'},
+      {key:'platform', label:'プラットフォーム順'},
+      {key:'code_jp',  label:'あ順（管理番号）'},
+      {key:'code_an',  label:'A数字順（管理番号）'},
     ];
 
-    function _codeNum(l){
-      const m=(l.productCode||'').match(/\d+/);return m?Number(m[0]):Infinity;
-    }
     function sortList(list){
-      const collator=new Intl.Collator('ja',{sensitivity:'base'});
+      const collatorJa=new Intl.Collator('ja',{sensitivity:'base'});
+      const collatorAn=new Intl.Collator('en',{numeric:true,sensitivity:'base'});
       switch(sortMode){
-        case 'date':         return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
-        case 'date_asc':     return list.sort((a,b)=>new Date(a.saleDate||0)-new Date(b.saleDate||0)||a.createdAt-b.createdAt);
-        case 'updatedAt':    return list.sort((a,b)=>(productMap[b.productId]?.updatedAt||0)-(productMap[a.productId]?.updatedAt||0));
-        case 'purchaseDate': return list.sort((a,b)=>new Date(productMap[b.productId]?.purchaseDate||0)-new Date(productMap[a.productId]?.purchaseDate||0));
-        case 'completedDate':return list.sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0));
-        case 'code_jp':      return list.sort((a,b)=>collator.compare(a.productCode||'',b.productCode||''));
-        case 'code_en':      return list.sort((a,b)=>(a.productCode||'').localeCompare(b.productCode||'','en'));
-        case 'code_num':     return list.sort((a,b)=>_codeNum(a)-_codeNum(b));
-        default:             return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
+        case 'date':     return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
+        case 'date_asc': return list.sort((a,b)=>new Date(a.saleDate||0)-new Date(b.saleDate||0)||a.createdAt-b.createdAt);
+        case 'code_jp':  return list.sort((a,b)=>collatorJa.compare(a.productCode||'',b.productCode||''));
+        case 'code_an':  return list.sort((a,b)=>collatorAn.compare(a.productCode||'',b.productCode||''));
+        default:         return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
       }
     }
 
@@ -1560,7 +1549,7 @@ const App = (() => {
       const thumb=l.photo
         ?`<img src="${l.photo}" style="width:100%;height:100%;object-fit:cover;">`
         :`<span style="font-size:18px;">📦</span>`;
-      const codeLine=l.productCode?`<div style="font-size:10px;color:var(--text-secondary);font-weight:600;margin-top:1px;white-space:nowrap;">${esc(l.productCode)}</div>`:'';
+      const codeLine=l.productCode?`<div style="font-size:15px;color:var(--text);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(l.productCode)}</div>`:'';
       const memoRow=l.memo?`<div style="font-size:11px;color:var(--text-secondary);padding:3px 0 0;border-top:1px solid var(--gray-border);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">📝 ${esc(l.memo)}</div>`:'';
       const onClickHandler=`if(this.closest('.sli-wrap').dataset.swiped){this.style.transition='transform 0.2s';this.style.transform='translateX(0)';delete this.closest('.sli-wrap').dataset.swiped;return;}App.navigate('sale-detail',{id:'${l.id}'},'売上詳細')`;
 
@@ -1686,7 +1675,7 @@ const App = (() => {
       const body=document.getElementById('__sales-body');if(!body)return;
       if(!list.length){
         body.innerHTML=filterStatus==='active'
-          ?`<div class="empty-state"><div class="empty-icon">🎉</div><p>発送待ちの商品はありません</p><small>全て完了しています</small></div>`
+          ?`<div class="empty-state"><div class="empty-icon">🎉</div><p>発送前の商品はありません</p><small>全て完了しています</small></div>`
           :`<div class="empty-state"><div class="empty-icon">💴</div><p>売上がありません</p></div>`;
         return;
       }
@@ -1877,7 +1866,7 @@ const App = (() => {
       document.body.appendChild(ov);
       ov.addEventListener('click',e=>{
         const btn=e.target.closest('.status-popup-item');
-        if(btn){sortMode=btn.dataset.key;setSortLabel();renderList();}
+        if(btn){sortMode=btn.dataset.key;_salesSortMode=sortMode;db.put('settings',{key:'salesSortMode',value:_salesSortMode});setSortLabel();renderList();}
         ov.remove();
       });
     });
@@ -2078,7 +2067,7 @@ const App = (() => {
           <button class="btn btn-gray btn-sm" onclick="App.navigate('sale-form',{editId:'${id}'},'売上を編集')" style="padding:6px 14px;font-size:13px;">✏️ 編集</button>
         </div>
         <div style="font-size:16px;font-weight:700;">${esc(l.productName)}</div>
-        ${l.productCode?`<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">管理番号: ${esc(l.productCode)}</div>`:''}
+        ${l.productCode?`<div style="font-size:13px;color:var(--text-secondary);margin-top:2px;">管理番号: ${esc(l.productCode)}</div>`:''}
         <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">${fmtDate(l.saleDate)}</div>
       </div>
       <div style="background:var(--white);margin-bottom:10px;">
@@ -2155,7 +2144,7 @@ const App = (() => {
     <div class="page-pad" style="background:var(--gray-light);">
       <div class="section-hd">プラットフォーム</div>
       <div class="platform-grid">
-        ${PLATFORMS.map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-platform="${p.key}" onclick="App._selectPlatformSale('${p.key}')" style="${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
+        ${PLATFORMS.filter(p=>!p.hidden).map(p=>`<button class="platform-btn ${p.key==='mercari'?'selected':''}" data-platform="${p.key}" onclick="App._selectPlatformSale('${p.key}')" style="${p.key==='mercari'?'background:'+p.color+';color:'+(isLightColor(p.color)?'#000':'#fff')+';border-color:'+p.color+';':''}">${p.name}</button>`).join('')}
       </div>
       <div class="form-group">
         <div class="form-row">
@@ -2328,19 +2317,113 @@ const App = (() => {
       container.innerHTML=SHIPPING_SHORTCUTS.length===0
         ?`<div class="empty-state"><div class="empty-icon">✉️</div><p>送料プリセットがありません</p></div>`
         :SHIPPING_SHORTCUTS.map((s,i)=>`
-        <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--gray-border);gap:12px;cursor:pointer;" onclick="App._editShipping(${i})">
-          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">${esc(s.label)}</div><div style="font-size:12px;color:var(--text-secondary);">${s.price>0?yen(s.price):'送料込み（¥0）'}</div></div>
-          <span style="color:#BDBDBD;font-size:18px;">›</span>
+        <div class="sh-row" data-idx="${i}" draggable="true" style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid var(--gray-border);gap:10px;background:var(--white);">
+          <div class="drag-handle" style="flex-shrink:0;color:#BDBDBD;font-size:20px;cursor:grab;padding:0 4px;">⠿</div>
+          <div style="flex:1;cursor:pointer;" onclick="App._editShipping(${i})">
+            <div style="font-size:15px;font-weight:500;">${esc(s.label)}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">${s.price>0?yen(s.price):'送料込み（¥0）'}</div>
+          </div>
+          <button style="flex-shrink:0;color:var(--text-secondary);font-size:12px;font-weight:600;padding:6px 10px;border:1px solid var(--gray-border);border-radius:8px;background:transparent;white-space:nowrap;" onclick="App._editShipping(${i})">編集</button>
         </div>`).join('');
+      setupShippingDrag();
+    }
+
+    function setupShippingDrag(){
+      const list=document.getElementById('__sh-list');if(!list)return;
+      let dragSrcIdx=null;
+      list.addEventListener('dragstart',e=>{
+        const row=e.target.closest('.sh-row[data-idx]');if(!row)return;
+        dragSrcIdx=parseInt(row.dataset.idx);
+        setTimeout(()=>row.classList.add('dragging'),0);
+        e.dataTransfer.effectAllowed='move';
+        e.dataTransfer.setData('text/plain',String(dragSrcIdx));
+      });
+      list.addEventListener('dragover',e=>{
+        e.preventDefault();e.dataTransfer.dropEffect='move';
+        const row=e.target.closest('.sh-row[data-idx]');
+        if(!row||parseInt(row.dataset.idx)===dragSrcIdx)return;
+        list.querySelectorAll('.sh-row').forEach(r=>r.classList.remove('drag-over'));
+        row.classList.add('drag-over');
+      });
+      list.addEventListener('dragleave',e=>{
+        const row=e.target.closest('.sh-row[data-idx]');if(row)row.classList.remove('drag-over');
+      });
+      list.addEventListener('drop',async e=>{
+        e.preventDefault();
+        const row=e.target.closest('.sh-row[data-idx]');if(!row||dragSrcIdx===null)return;
+        const toIdx=parseInt(row.dataset.idx);
+        if(toIdx===dragSrcIdx)return;
+        const item=SHIPPING_SHORTCUTS.splice(dragSrcIdx,1)[0];
+        SHIPPING_SHORTCUTS.splice(toIdx,0,item);
+        await saveShortcuts();renderList();
+      });
+      list.addEventListener('dragend',()=>{
+        list.querySelectorAll('.sh-row').forEach(r=>r.classList.remove('dragging','drag-over'));
+        dragSrcIdx=null;
+      });
+      // Mobile touch
+      let touchIdx=null,touchClone=null,touchTimer=null;
+      list.addEventListener('touchstart',e=>{
+        const row=e.target.closest('.sh-row[data-idx]');if(!row)return;
+        touchTimer=setTimeout(()=>{
+          touchIdx=parseInt(row.dataset.idx);
+          const rect=row.getBoundingClientRect();
+          touchClone=row.cloneNode(true);
+          Object.assign(touchClone.style,{position:'fixed',width:rect.width+'px',height:rect.height+'px',top:rect.top+'px',left:rect.left+'px',opacity:'0.85',border:'2px solid var(--primary)',zIndex:'9999',pointerEvents:'none',boxShadow:'0 6px 20px rgba(0,0,0,0.22)'});
+          document.body.appendChild(touchClone);row.style.opacity='0.3';if(navigator.vibrate)navigator.vibrate(40);
+        },430);
+      },{passive:true});
+      list.addEventListener('touchmove',e=>{
+        if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
+        if(touchIdx===null||!touchClone)return;
+        e.preventDefault();
+        const t=e.touches[0];
+        touchClone.style.top=(t.clientY-parseFloat(touchClone.style.height)/2)+'px';
+        touchClone.style.display='none';
+        const el=document.elementFromPoint(t.clientX,t.clientY);
+        touchClone.style.display='';
+        const over=el?.closest('.sh-row[data-idx]');
+        list.querySelectorAll('.sh-row').forEach(r=>r.classList.remove('drag-over'));
+        if(over&&parseInt(over.dataset.idx)!==touchIdx)over.classList.add('drag-over');
+      },{passive:false});
+      const endTouch=async e=>{
+        if(touchTimer){clearTimeout(touchTimer);touchTimer=null;}
+        const wasDragging=touchIdx!==null;
+        if(touchClone){touchClone.remove();touchClone=null;}
+        list.querySelectorAll('.sh-row').forEach(r=>{r.classList.remove('drag-over','dragging');r.style.opacity='';});
+        if(wasDragging&&e.changedTouches){
+          const t=e.changedTouches[0];
+          const el=document.elementFromPoint(t.clientX,t.clientY);
+          const over=el?.closest('.sh-row[data-idx]');
+          if(over&&parseInt(over.dataset.idx)!==touchIdx){
+            const toIdx=parseInt(over.dataset.idx);
+            const item=SHIPPING_SHORTCUTS.splice(touchIdx,1)[0];
+            SHIPPING_SHORTCUTS.splice(toIdx,0,item);
+            await saveShortcuts();renderList();
+          }
+        }
+        touchIdx=null;
+      };
+      list.addEventListener('touchend',endTouch,{passive:true});
+      list.addEventListener('touchcancel',endTouch,{passive:true});
     }
 
     App._editShipping=(idx)=>_showShippingEditDialog(idx);
+    App._deleteShortcut=async idx=>{
+      const ok=await confirmDialog('この送料プリセットを削除しますか？','削除','btn-danger');
+      if(!ok)return;
+      SHIPPING_SHORTCUTS.splice(idx,1);
+      await saveShortcuts();
+      renderList();
+    };
 
     main.innerHTML=`
-    <div class="page-pad" style="background:var(--gray-light);">
+    <div style="background:var(--gray-light);min-height:100%;">
       <div class="section-hd">送料プリセット一覧</div>
-      <div style="background:var(--white);" id="__sh-list"></div>
+      <div style="font-size:12px;color:var(--text-secondary);padding:6px 14px;">⠿ をドラッグまたは長押しで並び替え</div>
+      <div id="__sh-list"></div>
       <div style="padding:16px;"><button class="btn btn-outline-red btn-full btn-sm" onclick="App._resetShipping()">デフォルトに戻す</button></div>
+      <div style="height:80px;"></div>
     </div>`;
     renderList();
   }
@@ -2375,7 +2458,10 @@ const App = (() => {
               ${item.photo
                 ? `<img src="${item.photo}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;">`
                 : '<div style="width:52px;height:52px;border-radius:6px;background:var(--gray-light);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;">🏷</div>'}
-              <div style="flex:1;font-size:15px;font-weight:500;font-family:monospace;word-break:break-all;">${esc(item.number)}</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:15px;font-weight:500;font-family:monospace;word-break:break-all;">${esc(item.number)}</div>
+                ${item.sku?`<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">SKU: ${esc(item.sku)}</div>`:''}
+              </div>
               <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:22px;padding:4px 10px;cursor:pointer;flex-shrink:0;">✕</button>
             </div>`).join('')}</div>`
         }
@@ -2402,8 +2488,12 @@ const App = (() => {
       ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
         <h3 style="margin-bottom:16px;">JANコードを追加</h3>
         <div style="margin-bottom:12px;">
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">番号</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">JANコード番号</div>
           <input id="__jan-num-input" type="tel" placeholder="例: 4901234567890" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">SKU / 商品コード（任意）</div>
+          <input id="__jan-sku-input" type="text" placeholder="例: C-123" class="form-input" style="width:100%;font-size:15px;box-sizing:border-box;" autocomplete="off">
         </div>
         <div style="margin-bottom:20px;">
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">写真（任意）</div>
@@ -2434,7 +2524,8 @@ const App = (() => {
       document.getElementById('__jan-save-btn').onclick = async () => {
         const num = document.getElementById('__jan-num-input').value.trim();
         if (!num) { toast('番号を入力してください'); return; }
-        JAN_CODES.push({id: uid(), number: num, photo: photoData, createdAt: Date.now()});
+        const skuVal = document.getElementById('__jan-sku-input')?.value?.trim()||'';
+        JAN_CODES.push({id: uid(), number: num, sku: skuVal, photo: photoData, createdAt: Date.now()});
         await db.put('settings', {key: 'janCodes', value: JAN_CODES});
         toast('追加しました'); ov.remove(); renderList();
       };
@@ -2598,25 +2689,27 @@ const App = (() => {
       const body=document.getElementById('__pf-list');if(!body)return;
       body.innerHTML=PLATFORMS.map((p,i)=>`
         <div class="pf-row" data-key="${p.key}" draggable="true"
-          style="display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--gray-border);background:var(--white);gap:8px;"
+          style="display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--gray-border);background:${p.hidden?'var(--gray-light)':'var(--white)'};gap:8px;opacity:${p.hidden?'0.6':'1'};"
           oncontextmenu="App._showPlatformMoveMenu('${p.key}',event);event.preventDefault();">
           <div class="drag-handle">⠿</div>
           <div style="width:32px;height:32px;border-radius:8px;background:${p.color};flex-shrink:0;"></div>
           <div style="flex:1;min-width:0;">
-            <div style="font-size:14px;font-weight:600;">${esc(p.name)}</div>
+            <div style="font-size:14px;font-weight:600;">${esc(p.name)}${p.hidden?'<span style="font-size:11px;color:var(--gray);margin-left:6px;">非表示</span>':''}</div>
             <div style="font-size:12px;color:var(--text-secondary);">手数料: ${p.feeRate}%</div>
           </div>
-          <button style="color:var(--primary);font-size:13px;font-weight:500;padding:6px 10px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._showPlatformEditDialog('${p.key}')">編集</button>
-          ${i>=DEFAULT_PLATFORMS.length-1?`<button style="color:var(--danger);font-size:13px;padding:6px 8px;" onclick="App._deletePlatform('${p.key}')">削除</button>`:''}
+          <button style="color:${p.hidden?'var(--success)':'var(--text-secondary)'};font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._togglePlatformHidden('${p.key}')">${p.hidden?'表示':'非表示'}</button>
+          <button style="color:var(--primary);font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--gray-border);border-radius:8px;" onclick="App._showPlatformEditDialog('${p.key}')">編集</button>
+          <button style="color:var(--danger);font-size:12px;font-weight:500;padding:6px 8px;border:1px solid var(--danger);border-radius:8px;" onclick="App._deletePlatform('${p.key}')">削除</button>
         </div>`).join('');
       setupPlatformDrag();
     }
 
     main.innerHTML=`
-    <div class="page-pad" style="background:var(--gray-light);">
+    <div style="background:var(--gray-light);min-height:100%;">
       <div style="padding:10px 16px;font-size:13px;color:var(--text-secondary);">ドラッグ（⠿）または長押し・右クリックで並び替え。プラットフォームの順番は売上管理表のプラットフォーム別表示に反映されます。</div>
       <div id="__pf-list"></div>
       <div style="padding:12px;"><button class="btn btn-outline-red btn-full" onclick="App._resetPlatforms()">デフォルトに戻す</button></div>
+      <div style="height:80px;"></div>
     </div>`;
     renderList();
     App._pfRefresh=renderList;
@@ -2698,6 +2791,15 @@ const App = (() => {
     PLATFORMS=PLATFORMS.filter(p=>p.key!==key);
     await db.put('settings',{key:'platforms',value:PLATFORMS});
     toast('削除しました');App._pfRefresh?.();
+  }
+
+  async function _togglePlatformHidden(key){
+    const idx=PLATFORMS.findIndex(p=>p.key===key);
+    if(idx<0)return;
+    PLATFORMS[idx]={...PLATFORMS[idx],hidden:!PLATFORMS[idx].hidden};
+    await db.put('settings',{key:'platforms',value:PLATFORMS});
+    toast(PLATFORMS[idx].hidden?'非表示にしました':'表示に戻しました');
+    App._pfRefresh?.();
   }
 
   async function _resetPlatforms(){
@@ -2847,7 +2949,12 @@ const App = (() => {
     // DBからJANコードを読み込む
     const savedJan=await db.get('settings','janCodes');
     if(savedJan?.value) JAN_CODES=savedJan.value;
-    await switchTab('home');
+    // DBから売上ソートモードを読み込む
+    const savedSortMode=await db.get('settings','salesSortMode');
+    if(savedSortMode?.value) _salesSortMode=savedSortMode.value;
+    // 前回のタブを読み込む
+    const savedTab=await db.get('settings','lastTab');
+    await switchTab(savedTab?.value||'home');
   }
 
   return {
@@ -2864,7 +2971,7 @@ const App = (() => {
     _completeFromDetail:()=>{}, _showStatusPopupSale:()=>{}, _deleteSale:()=>{},
     _setStatus:()=>{}, _showStatusPopup:()=>{},
     _toggleHidden:()=>{},
-    _showPlatformEditDialog, _savePlatform, _deletePlatform, _resetPlatforms, _pfRefresh:null,
+    _showPlatformEditDialog, _savePlatform, _deletePlatform, _resetPlatforms, _togglePlatformHidden, _pfRefresh:null,
     _showPlatformMoveMenu:()=>{},
     _salesSetView:()=>{}, _salesSettingsSheet:()=>{},
     _exportSalesCSV,
@@ -2873,7 +2980,7 @@ const App = (() => {
     _obSelShipping:()=>{},
     _deleteJanCode:()=>{},
     _anaTab:()=>{}, _anaNav:()=>{}, _anaRkSort:()=>{}, _anaRkPeriod:()=>{},
-    _anaPfPeriod:()=>{}, _anaInvDays:()=>{}, _anaInvToggle:()=>{},
+    _anaPfPeriod:()=>{},
     _exportListingsCSV, _csvByPeriod,
     _editShipping:()=>{}, _resetShipping:async()=>{
       const ok=await confirmDialog('送料プリセットをデフォルトに戻しますか？');if(!ok)return;

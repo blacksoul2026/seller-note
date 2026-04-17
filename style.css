@@ -35,10 +35,11 @@ img { max-width: 100%; display: block; }
   height: var(--header-h);
   background: var(--white);
   border-bottom: 1px solid var(--gray-border);
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
+  gap: 4px;
+  padding: 0 8px;
   position: sticky;
   top: 0;
   z-index: 100;
@@ -47,10 +48,15 @@ img { max-width: 100%; display: block; }
 #header h1 {
   font-size: 17px;
   font-weight: 700;
-  flex: 1;
-  text-align: center;
   color: var(--primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 0 2px;
 }
+#back-btn { justify-self: start; }
+#action-btn { justify-self: end; }
 .header-btn {
   min-width: 40px;
   height: 36px;
@@ -495,11 +501,17 @@ img { max-width: 100%; display: block; }
   background: transparent;
   resize: none;
   color: var(--text);
-  min-height: 80px;
+  min-height: 200px;
 }
 .form-suffix { font-size: 14px; color: var(--text-secondary); margin-left: 4px; flex-shrink: 0; }
 
 /* ===== PHOTO GRID (edit form) ===== */
+.photo-edit-grid, .photo-edit-grid * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
 .photo-edit-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -987,13 +999,14 @@ img { max-width: 100%; display: block; }
   margin-bottom: 2px;
 }
 .sli-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 400;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  color: var(--text-secondary);
 }
 .sli-status-btn {
   flex-shrink: 0;
@@ -1279,7 +1292,7 @@ img { max-width: 100%; display: block; }
 .sli-simple:active { background: var(--gray-light); }
 .sli-simple-thumb { width: 52px; height: 52px; border-radius: 8px; background: var(--gray-light); overflow: hidden; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .sli-simple-body { flex: 1; min-width: 0; }
-.sli-simple-name { font-size: 14px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sli-simple-name { font-size: 11px; font-weight: 400; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-secondary); }
 .sli-simple-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
 .sli-simple-right { text-align: right; flex-shrink: 0; }
 .sli-simple-profit { font-size: 15px; font-weight: 700; }
@@ -1289,9 +1302,8 @@ img { max-width: 100%; display: block; }
 .prod-detail-label { font-size: 11px; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
 
 /* ===== ANALYTICS PAGE ===== */
-.ana-tab-bar { display: flex; overflow-x: auto; background: var(--white); border-bottom: 2px solid var(--gray-border); -webkit-overflow-scrolling: touch; scrollbar-width: none; flex-shrink: 0; position: sticky; top: 0; z-index: 10; }
-.ana-tab-bar::-webkit-scrollbar { display: none; }
-.ana-tab { flex-shrink: 0; padding: 12px 16px; font-size: 14px; font-weight: 500; color: var(--text-secondary); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; white-space: nowrap; }
+.ana-tab-bar { display: flex; background: var(--white); border-bottom: 2px solid var(--gray-border); flex-shrink: 0; position: sticky; top: 0; z-index: 10; }
+.ana-tab { flex: 1; padding: 12px 6px; font-size: 13px; font-weight: 500; color: var(--text-secondary); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; white-space: nowrap; text-align: center; }
 .ana-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 .ana-period-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--white); border-bottom: 1px solid var(--gray-border); }
 .ana-period-lbl { flex: 1; text-align: center; font-size: 15px; font-weight: 600; }
