@@ -343,7 +343,19 @@ const App = (() => {
 
       if(tab==='monthly'){
         const s=cs(fbm(completedL,mYear,mMonth));
-        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
+        // 直近6か月の利益棒グラフ
+        const chartData=[];
+        for(let i=5;i>=0;i--){let y=mYear,m=mMonth-i;while(m<0){m+=12;y--;}chartData.push({y,m,profit:cs(fbm(completedL,y,m)).profit});}
+        const maxAbs=Math.max(...chartData.map(d=>Math.abs(d.profit)),1);
+        const chartBars=chartData.map(d=>{
+          const isCur=d.y===mYear&&d.m===mMonth;
+          const neg=d.profit<0;
+          const pct=Math.round(Math.abs(d.profit)/maxAbs*100);
+          const barH=`${Math.max(pct,2)}%`;
+          return `<div class="pmc-col${isCur?' cur':''}"><div class="pmc-bar-area"><div class="pmc-bar${neg?' neg':''}" style="height:${barH};"></div></div><div class="pmc-lbl">${MO[d.m].replace('月','')}</div></div>`;
+        }).join('');
+        const chartHtml=`<div class="pmc-wrap"><div class="pmc-title">直近6か月の利益</div><div class="pmc-chart">${chartBars}</div></div>`;
+        body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${chartHtml}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
 
       }else if(tab==='yearly'){
         const s=cs(fby(completedL,aYear));
@@ -684,10 +696,11 @@ const App = (() => {
     // プラットフォーム別販売数
     const pfCounts={};
     done.forEach(l=>{const k=l.platform||'other';pfCounts[k]=(pfCounts[k]||0)+1;});
-    const pfRows=Object.entries(pfCounts).sort((a,b)=>b[1]-a[1]).map(([pfKey,cnt])=>{
+    const pfEntries=Object.entries(pfCounts).sort((a,b)=>b[1]-a[1]);
+    const pfRows=pfEntries.map(([pfKey,cnt])=>{
       const pf=getPlatform(pfKey);
       return `<div class="detail-row"><span class="detail-label"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></span><span class="detail-value">${cnt}個</span></div>`;
-    }).join('');
+    }).join('')+(pfEntries.length>1?`<div class="detail-row" style="border-top:1px solid var(--gray-border);"><span class="detail-label" style="font-weight:600;">合計</span><span class="detail-value" style="font-weight:600;">${done.length}個</span></div>`:'');
 
     // 写真（スクエア表示 + 矢印ナビ）
     let photosHtml='';
@@ -2462,7 +2475,10 @@ const App = (() => {
                 <div style="font-size:15px;font-weight:500;font-family:monospace;word-break:break-all;">${esc(item.number)}</div>
                 ${item.sku?`<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">SKU: ${esc(item.sku)}</div>`:''}
               </div>
-              <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:22px;padding:4px 10px;cursor:pointer;flex-shrink:0;">✕</button>
+              <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
+                <button onclick="App._editJanCode('${item.id}')" style="background:var(--gray-light);border:none;border-radius:6px;color:var(--text);font-size:12px;padding:5px 10px;cursor:pointer;white-space:nowrap;">編集</button>
+                <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:20px;padding:2px 10px;cursor:pointer;">✕</button>
+              </div>
             </div>`).join('')}</div>`
         }
       </div>`;
@@ -2482,6 +2498,64 @@ const App = (() => {
       toast('削除しました');
       renderList();
     };
+
+    App._editJanCode = id => {
+      const item = JAN_CODES.find(j => j.id === id);
+      if (!item) return;
+      showEditDialog(item);
+    };
+
+    function showEditDialog(item) {
+      const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
+      ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
+        <h3 style="margin-bottom:16px;">JANコードを編集</h3>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">JANコード番号</div>
+          <input id="__jan-edit-num" type="tel" value="${esc(item.number)}" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">SKU / 商品コード（任意）</div>
+          <input id="__jan-edit-sku" type="text" value="${esc(item.sku||'')}" class="form-input" style="width:100%;font-size:15px;box-sizing:border-box;" autocomplete="off">
+        </div>
+        <div style="margin-bottom:20px;">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">写真（任意）</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:var(--gray-light);border:1px dashed var(--gray-border);border-radius:8px;padding:10px 16px;font-size:13px;color:var(--text-secondary);">
+              📷 写真を変更
+              <input type="file" accept="image/*" id="__jan-edit-photo" style="display:none;">
+            </label>
+            <div id="__jan-edit-thumb">${item.photo?`<img src="${item.photo}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;">`:''}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="__jan-edit-cancel" class="btn btn-gray btn-full">キャンセル</button>
+          <button id="__jan-edit-save" class="btn btn-primary btn-full">保存</button>
+        </div>
+      </div>`;
+      document.body.appendChild(ov);
+
+      let photoData = item.photo || null;
+
+      document.getElementById('__jan-edit-photo').addEventListener('change', async e => {
+        const f = e.target.files[0]; if (!f) return;
+        const b64 = await fileToBase64(f);
+        photoData = await resizeImage(b64, 400, 400);
+        document.getElementById('__jan-edit-thumb').innerHTML = `<img src="${photoData}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;">`;
+      });
+
+      document.getElementById('__jan-edit-save').onclick = async () => {
+        const num = document.getElementById('__jan-edit-num').value.trim();
+        if (!num) { toast('番号を入力してください'); return; }
+        const skuVal = document.getElementById('__jan-edit-sku').value.trim();
+        const idx = JAN_CODES.findIndex(j => j.id === item.id);
+        if (idx >= 0) JAN_CODES[idx] = {...JAN_CODES[idx], number: num, sku: skuVal, photo: photoData};
+        await db.put('settings', {key: 'janCodes', value: JAN_CODES});
+        toast('更新しました'); ov.remove(); renderList();
+      };
+      document.getElementById('__jan-edit-cancel').onclick = () => ov.remove();
+      ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+      setTimeout(() => document.getElementById('__jan-edit-num')?.focus(), 100);
+    }
 
     function showAddDialog() {
       const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
