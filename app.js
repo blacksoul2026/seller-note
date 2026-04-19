@@ -747,7 +747,7 @@ const App = (() => {
           <button id="__catord-done" style="font-size:13px;padding:6px 16px;background:#333;color:#fff;border:none;border-radius:8px;font-weight:600;">完了</button>
         </div>
         <p style="font-size:12px;color:#999;margin:0 0 10px;flex-shrink:0;">≡ を掴んで上下にドラッグして並び替えてください</p>
-        <div id="__catord-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">${cats.map(c=>`
+        <div id="__catord-list" style="overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;min-height:0;display:flex;flex-direction:column;gap:6px;">${cats.map(c=>`
           <div class="catord-item" data-cat="${esc(c)}" style="display:flex;align-items:center;gap:10px;background:#f8f8f8;border-radius:8px;padding:10px 14px;touch-action:none;cursor:default;">
             <span data-handle="1" style="color:#bbb;font-size:20px;flex-shrink:0;cursor:grab;padding:4px 6px;">≡</span>
             <span style="flex:1;font-size:14px;font-weight:500;">${esc(c)}</span>
