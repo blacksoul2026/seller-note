@@ -1262,7 +1262,7 @@ const App = (() => {
             <button type="button" onclick="App._step('f-stock',1)">＋</button>
           </div>
         </div>
-        <div class="form-row" style="align-items:flex-start;padding-top:12px;padding-bottom:10px;"><label class="form-label" style="padding-top:2px;">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div></div></div>
+        <div class="form-row"><label class="form-label">種類</label><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
