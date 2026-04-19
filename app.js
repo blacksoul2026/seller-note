@@ -620,12 +620,16 @@ const App = (() => {
   // PRODUCT MASTER LIST（グリッド + 並び替え）
   // =====================================================================
   async function pgProducts(main,actionBtn) {
-    const products=await db.getAll('products');
+    const [products, catOrderData] = await Promise.all([
+      db.getAll('products'),
+      db.get('settings','categoryFilterOrder'),
+    ]);
     actionBtn.className='header-btn-group';
     actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
     actionBtn.onclick=null;
     actionBtn.innerHTML=`<button class="hbg-btn icon-pill" onclick="App.navigate('product-form',{},'商品を追加')" style="font-size:18px;">＋</button>`;
     let searchQ='', showHidden=false, selectedCategory='all';
+    let _catOrder = catOrderData?.value || []; // カスタム並び順
 
     function sortProducts(list) {
       const arr=[...list];
@@ -648,8 +652,12 @@ const App = (() => {
     }
 
     function getCategories() {
-      const cats=[...new Set(products.map(p=>p.category||'').filter(c=>c))];
-      return cats.sort((a,b)=>a.localeCompare(b,'ja'));
+      const all=[...new Set(products.map(p=>p.category||'').filter(c=>c))];
+      if(_catOrder.length===0) return all.sort((a,b)=>a.localeCompare(b,'ja'));
+      // カスタム順を適用し、新規カテゴリーは末尾に追加
+      const ordered=_catOrder.filter(c=>all.includes(c));
+      const newCats=all.filter(c=>!_catOrder.includes(c)).sort((a,b)=>a.localeCompare(b,'ja'));
+      return [...ordered,...newCats];
     }
 
     function renderCategoryBar() {
@@ -660,7 +668,7 @@ const App = (() => {
       bar.style.display='';
       bar.innerHTML=[{k:'all',l:'すべて'},...cats.map(c=>({k:c,l:c}))].map(c=>
         `<button class="cat-filter-btn${selectedCategory===c.k?' active':''}" onclick="App._setCategoryFilter('${esc(c.k)}')">${esc(c.l)}</button>`
-      ).join('');
+      ).join('') + `<button onclick="App._editCategoryOrder()" style="flex-shrink:0;padding:3px 9px;font-size:11px;background:#f0f0f0;border:1px solid #ddd;border-radius:12px;color:#888;cursor:pointer;white-space:nowrap;">並替</button>`;
     }
 
     function filtered() {
@@ -726,6 +734,60 @@ const App = (() => {
     renderCategoryBar();
     App._refreshProductGrid=renderGrid;
     App._setCategoryFilter=(cat)=>{selectedCategory=cat;renderCategoryBar();renderGrid();};
+
+    App._editCategoryOrder=()=>{
+      const cats=getCategories();
+      if(cats.length===0)return;
+      const ov=document.createElement('div');
+      ov.className='status-popup-overlay';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
+      ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));max-height:75vh;display:flex;flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">
+          <span style="font-size:16px;font-weight:700;">カテゴリーを並び替え</span>
+          <button id="__catord-done" style="font-size:13px;padding:6px 16px;background:#333;color:#fff;border:none;border-radius:8px;font-weight:600;">完了</button>
+        </div>
+        <p style="font-size:12px;color:#999;margin:0 0 10px;flex-shrink:0;">≡ を掴んで上下にドラッグして並び替えてください</p>
+        <div id="__catord-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">${cats.map(c=>`
+          <div class="catord-item" data-cat="${esc(c)}" style="display:flex;align-items:center;gap:10px;background:#f8f8f8;border-radius:8px;padding:10px 14px;touch-action:none;cursor:default;">
+            <span style="color:#bbb;font-size:20px;flex-shrink:0;cursor:grab;">≡</span>
+            <span style="flex:1;font-size:14px;font-weight:500;">${esc(c)}</span>
+          </div>`).join('')}
+        </div>
+      </div>`;
+      document.body.appendChild(ov);
+      ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+
+      const list=ov.querySelector('#__catord-list');
+      let dragging=null;
+      list.addEventListener('touchstart',e=>{
+        const item=e.target.closest('.catord-item');if(!item)return;
+        dragging=item;
+        item.style.opacity='0.55';item.style.background='#e8eaff';
+      },{passive:true});
+      list.addEventListener('touchmove',e=>{
+        if(!dragging)return;
+        e.preventDefault();
+        const y=e.touches[0].clientY;
+        const items=[...list.querySelectorAll('.catord-item')];
+        for(let i=0;i<items.length;i++){
+          const it=items[i];if(it===dragging)continue;
+          const r=it.getBoundingClientRect();
+          if(y<r.top+r.height/2){list.insertBefore(dragging,it);break;}
+          if(i===items.length-1&&y>r.top+r.height/2){list.appendChild(dragging);}
+        }
+      },{passive:false});
+      list.addEventListener('touchend',()=>{
+        if(!dragging)return;
+        dragging.style.opacity='';dragging.style.background='';dragging=null;
+      });
+
+      ov.querySelector('#__catord-done').onclick=()=>{
+        _catOrder=[...list.querySelectorAll('.catord-item')].map(el=>el.dataset.cat);
+        db.put('settings',{key:'categoryFilterOrder',value:_catOrder}).catch(()=>{});
+        renderCategoryBar();
+        ov.remove();
+      };
+    };
     setupGridDrag();
 
     document.getElementById('__product-search')?.addEventListener('input',e=>{searchQ=e.target.value.trim();renderGrid();});
