@@ -1,49 +1,133 @@
 'use strict';
 
 // =====================================================================
-// DATABASE（Firestore版 - 写真はサブコレクションに保存）
+// DATABASE（Firestore版 + IndexedDB永続キャッシュ + sync_meta差分チェック）
+// 起動時に sync_meta を1 readだけ確認し、変更がなければ IndexedDB から
+// 全データを取得（Firestore read = 0）。変更があった場合のみ再fetch。
 // =====================================================================
 class DB {
-  constructor() { this.userId = null; }
+  constructor() {
+    this.userId = null;
+    this._cache = {};      // セッション内メモリキャッシュ {store: [...docs]}
+    this._stale = true;    // true=Firestoreから再取得が必要
+    this.onListingChange = null; // (oldListing, newListing) => Promise
+  }
 
   async open() {
     this.userId = window._currentUser.uid;
+    this._cache = {};
+    this._stale = await this._checkStaleness();
     return this;
+  }
+
+  // sync_meta を1 readして鮮度を確認（1セッション = 1 Firestore read）
+  async _checkStaleness() {
+    const lsKey = 'sn_ts_' + this.userId;
+    const localTs = localStorage.getItem(lsKey);
+    try {
+      const snap = await window._fs.getDoc(this._doc('settings', 'sync_meta'));
+      const serverTs = snap.exists() ? String(snap.data().updated_at || '0') : '0';
+      if (localTs && localTs === serverTs) return false; // 鮮度OK
+      localStorage.setItem(lsKey, serverTs);
+      return true; // 古い → 再fetch必要
+    } catch(e) {
+      return false; // オフライン時はキャッシュをそのまま使う
+    }
+  }
+
+  // 書き込み発生時に sync_meta を更新（他端末が変化を検知できる）
+  async _touchSyncMeta() {
+    const ts = Date.now();
+    await window._fs.setDoc(this._doc('settings', 'sync_meta'), { key:'sync_meta', updated_at:ts });
+    localStorage.setItem('sn_ts_' + this.userId, String(ts));
   }
 
   _col(name) { return window._fs.collection(window._firestore, 'users', this.userId, name); }
   _doc(name, id) { return window._fs.doc(window._firestore, 'users', this.userId, name, String(id)); }
+  _key(store, data) {
+    return (store === 'settings' || store === 'monthly_stats') ? data.key : data.id;
+  }
 
-  // 写真は商品ドキュメントに直接保存（480px圧縮済みなので1MB以内に収まる）
   async getAll(store) {
-    const { getDocs } = window._fs;
-    const snap = await getDocs(this._col(store));
-    return snap.docs.map(d => d.data());
+    if (this._cache[store]) return [...this._cache[store]];
+
+    // データが新鮮なら IndexedDB キャッシュから読む（Firestore read = 0）
+    if (!this._stale) {
+      try {
+        const snap = await window._fs.getDocsFromCache(this._col(store));
+        const docs = snap.docs.map(d => d.data());
+        this._cache[store] = docs;
+        return [...docs];
+      } catch(e) { /* キャッシュミス → ネットワークへフォールバック */ }
+    }
+
+    const snap = await window._fs.getDocs(this._col(store));
+    const docs = snap.docs.map(d => d.data());
+    this._cache[store] = docs;
+    return [...docs];
   }
 
   async get(store, id) {
-    const { getDoc } = window._fs;
-    const snap = await getDoc(this._doc(store, id));
+    if (this._cache[store]) {
+      return this._cache[store].find(d => String(this._key(store,d)) === String(id)) ?? undefined;
+    }
+    if (!this._stale) {
+      try {
+        const snap = await window._fs.getDocFromCache(this._doc(store, id));
+        if (snap.exists()) return snap.data();
+      } catch(e) {}
+    }
+    const snap = await window._fs.getDoc(this._doc(store, id));
     if (!snap.exists()) return undefined;
     return snap.data();
   }
 
   async put(store, data) {
-    const { setDoc } = window._fs;
-    const docId = store === 'settings' ? data.key : data.id;
-    await setDoc(this._doc(store, String(docId)), data);
+    const docId = this._key(store, data);
+    // listings変更コールバック用に旧データを取得
+    const old = (store === 'listings' && this._cache[store])
+      ? (this._cache[store].find(d => String(this._key(store,d)) === String(docId)) || null)
+      : null;
+    await window._fs.setDoc(this._doc(store, String(docId)), data);
+    if (this._cache[store]) {
+      const idx = this._cache[store].findIndex(d => String(this._key(store,d)) === String(docId));
+      if (idx >= 0) this._cache[store][idx] = data;
+      else this._cache[store].push(data);
+    }
+    // listings変更をmonthly_statsに通知
+    if (store === 'listings' && this.onListingChange) {
+      this.onListingChange(old, data).catch(() => {});
+    }
+    // settings/monthly_stats以外の変更は他端末に通知
+    if (store !== 'settings' && store !== 'monthly_stats') {
+      this._touchSyncMeta().catch(() => {});
+    }
   }
 
   async delete(store, id) {
-    const { deleteDoc } = window._fs;
-    await deleteDoc(this._doc(store, String(id)));
+    const old = (store === 'listings' && this._cache[store])
+      ? (this._cache[store].find(d => String(this._key(store,d)) === String(id)) || null)
+      : null;
+    await window._fs.deleteDoc(this._doc(store, String(id)));
+    if (this._cache[store]) {
+      this._cache[store] = this._cache[store].filter(d => String(this._key(store,d)) !== String(id));
+    }
+    if (store === 'listings' && this.onListingChange && old) {
+      this.onListingChange(old, null).catch(() => {});
+    }
+    if (store !== 'settings' && store !== 'monthly_stats') {
+      this._touchSyncMeta().catch(() => {});
+    }
   }
 
   async getAllByIndex(store, field, value) {
-    const { query: fsQ, where: fsW, getDocs } = window._fs;
-    const q = fsQ(this._col(store), fsW(field, '==', value));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data());
+    const all = await this.getAll(store); // getAll経由でキャッシュを活用
+    return all.filter(d => d[field] === value);
+  }
+
+  clearCache(store) {
+    if (store) delete this._cache[store];
+    else this._cache = {};
   }
 }
 
@@ -235,6 +319,60 @@ const App = (() => {
 
   const TAB_TITLES = {home:'分析',sales:'売上管理表',products:'商品マスタ',settings:'設定'};
 
+  // =====================================================================
+  // MONTHLY STATS（月別集計 - Firestoreへの保存で分析readを激減）
+  // =====================================================================
+  function _calcMonthStats(mk, ml) {
+    const platform = {};
+    ml.forEach(l => {
+      const pf = l.platform || 'other';
+      if (!platform[pf]) platform[pf] = {sales:0, profit:0, count:0};
+      platform[pf].sales  += Number(l.salePrice)||0;
+      platform[pf].profit += Number(l.profit)||0;
+      platform[pf].count++;
+    });
+    return {
+      key: mk,
+      sales:       ml.reduce((s,l)=>s+(Number(l.salePrice)||0),0),
+      profit:      ml.reduce((s,l)=>s+(Number(l.profit)||0),0),
+      grossProfit: ml.reduce((s,l)=>s+(Number(l.salePrice)||0)-(Number(l.purchasePrice)||0),0),
+      cost:        ml.reduce((s,l)=>s+(Number(l.purchasePrice)||0)+(Number(l.fee)||0)+(Number(l.shipping)||0),0),
+      count:       ml.length,
+      platform,
+      updatedAt: Date.now(),
+    };
+  }
+
+  // listing保存・削除時に自動呼び出し（DB.onListingChangeコールバック）
+  async function _syncMonthlyStats(oldL, newL) {
+    const months = new Set();
+    if (oldL?.status === 'completed' && oldL.saleDate) months.add((oldL.saleDate||'').slice(0,7));
+    if (newL?.status === 'completed' && newL.saleDate) months.add((newL.saleDate||'').slice(0,7));
+    if (months.size === 0) return;
+    const all = await db.getAll('listings'); // メモリキャッシュから（0 read）
+    for (const mk of months) {
+      const ml = all.filter(l => l.status === 'completed' && (l.saleDate||'').slice(0,7) === mk);
+      await db.put('monthly_stats', _calcMonthStats(mk, ml));
+    }
+  }
+
+  // 初回起動時に既存listingsからmonthly_statsをバックフィル
+  async function _backfillMonthlyStats() {
+    const listings = await db.getAll('listings');
+    const completed = listings.filter(l => l.status === 'completed' && l.saleDate);
+    const byMonth = {};
+    completed.forEach(l => {
+      const mk = (l.saleDate||'').slice(0,7);
+      if (!mk) return;
+      if (!byMonth[mk]) byMonth[mk] = [];
+      byMonth[mk].push(l);
+    });
+    for (const [mk, ml] of Object.entries(byMonth)) {
+      await db.put('monthly_stats', _calcMonthStats(mk, ml));
+    }
+    await db.put('settings', {key:'monthly_stats_v1', value:true});
+  }
+
   // ===== ROUTER =====
   async function switchTab(tab) {
     currentTab = tab;
@@ -301,12 +439,28 @@ const App = (() => {
   }
 
   // =====================================================================
-  // HOME
+  // HOME（分析タブ - monthly_statsベースで Firestore read を大幅削減）
+  // 月別/年別/PF別: monthly_stats（最大数十件）から集計 → read激減
+  // ランキング: listings をキャッシュから遅延読み込み
   // =====================================================================
   async function pgHome(main,actionBtn) {
-    // 分析ページはヘッダー更新ボタンなし（プルトゥリフレッシュで代替）
-    const [products,listings]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
-    const completedL=listings.filter(l=>l.status==='completed');
+    // monthly_stats と products のみ先読み（listings は必要時に遅延ロード）
+    const [products, allMonthlyStats] = await Promise.all([
+      db.getAll('products'),
+      db.getAll('monthly_stats'),
+    ]);
+    const statsMap = Object.fromEntries(allMonthlyStats.map(s=>[s.key,s]));
+
+    // listings は ranking タブ初回のみロード（以降はキャッシュ）
+    let _completedL = null;
+    async function getCompletedL() {
+      if (!_completedL) {
+        const all = await db.getAll('listings');
+        _completedL = all.filter(l=>l.status==='completed');
+      }
+      return _completedL;
+    }
+
     const now=new Date();
     let tab='monthly';
     let mYear=now.getFullYear(),mMonth=now.getMonth();
@@ -315,16 +469,31 @@ const App = (() => {
     let pfPeriod='month',pfYear=now.getFullYear(),pfMonth=now.getMonth();
 
     const MO=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
-    const fbm=(list,y,m)=>list.filter(l=>{const d=new Date(l.saleDate||l.createdAt);return d.getFullYear()===y&&d.getMonth()===m;});
-    const fby=(list,y)=>list.filter(l=>new Date(l.saleDate||l.createdAt).getFullYear()===y);
-    const cs=list=>({
-      sales:list.reduce((a,l)=>a+(Number(l.salePrice)||0),0),
-      cost:list.reduce((a,l)=>a+(Number(l.purchasePrice)||0)+(Number(l.fee)||0)+(Number(l.shipping)||0),0),
-      grossProfit:list.reduce((a,l)=>a+(Number(l.salePrice)||0)-(Number(l.purchasePrice)||0),0), // 粗利＝売上−仕入れ値
-      profit:list.reduce((a,l)=>a+(Number(l.profit)||0),0), // 利益＝売上−仕入れ−手数料−送料
-      get margin(){return this.sales>0?(this.profit/this.sales*100).toFixed(1):'0.0';},
-      count:list.length
-    });
+    const mk=(y,m)=>`${y}-${String(m+1).padStart(2,'0')}`;
+
+    // monthly_stats から統計オブジェクトを生成（cs()と同じインタフェース）
+    function msObj(y, m) {
+      const s = statsMap[mk(y,m)] || {};
+      return {
+        sales:s.sales||0, cost:s.cost||0,
+        grossProfit:s.grossProfit||0, profit:s.profit||0,
+        count:s.count||0,
+        get margin(){return this.sales>0?(this.profit/this.sales*100).toFixed(1):'0.0';}
+      };
+    }
+    function yearObj(y) {
+      const months = Array.from({length:12},(_,i)=>msObj(y,i));
+      const s = {
+        sales:months.reduce((a,m)=>a+m.sales,0),
+        cost:months.reduce((a,m)=>a+m.cost,0),
+        grossProfit:months.reduce((a,m)=>a+m.grossProfit,0),
+        profit:months.reduce((a,m)=>a+m.profit,0),
+        count:months.reduce((a,m)=>a+m.count,0),
+      };
+      s.margin = s.sales>0?(s.profit/s.sales*100).toFixed(1):'0.0';
+      return s;
+    }
+
     const sh=s=>`<div class="ana-stats-grid">
       <div class="ana-stat"><div class="ana-stat-lbl">売上</div><div class="ana-stat-val">${yen(s.sales)}</div></div>
       <div class="ana-stat"><div class="ana-stat-lbl">コスト</div><div class="ana-stat-val">${yen(s.cost)}</div></div>
@@ -334,15 +503,15 @@ const App = (() => {
       <div class="ana-stat"><div class="ana-stat-lbl">販売数</div><div class="ana-stat-val">${s.count}件</div></div>
     </div>`;
 
-    function renderContent(){
+    async function renderContent(){
       const body=document.getElementById('__ana-body');
       if(!body)return;
 
       if(tab==='monthly'){
-        const s=cs(fbm(completedL,mYear,mMonth));
-        // 直近6か月の利益棒グラフ（改善版）
+        const s=msObj(mYear,mMonth);
+        // 直近6か月の利益棒グラフ（monthly_statsから読む）
         const chartData=[];
-        for(let i=5;i>=0;i--){let y=mYear,m=mMonth-i;while(m<0){m+=12;y--;}chartData.push({y,m,profit:cs(fbm(completedL,y,m)).profit});}
+        for(let i=5;i>=0;i--){let y=mYear,m=mMonth-i;while(m<0){m+=12;y--;}chartData.push({y,m,profit:msObj(y,m).profit});}
         const profits=chartData.map(d=>d.profit);
         const maxP=Math.max(...profits,0);
         const minP=Math.min(...profits,0);
@@ -359,11 +528,10 @@ const App = (() => {
         const yLabels=yTicks.map(t=>{
           const b=toBN(t).toFixed(1);
           const lbl=Math.abs(t)>=10000?(t/10000).toFixed(1)+'万':Math.abs(t)>=1000?(t/1000).toFixed(0)+'k':String(t);
-          return `<div style="position:absolute;bottom:${b}%;right:3px;transform:translateY(50%);font-size:8px;color:#bbb;white-space:nowrap;text-align:right;">${lbl}</div>`;
+          return `<div style="position:absolute;bottom:${b}%;right:2px;transform:translateY(50%);font-size:8px;color:#999;white-space:nowrap;text-align:right;line-height:1;">${lbl}</div>`;
         }).join('');
         const gridLines=yTicks.map(t=>{
-          const b=toBN(t).toFixed(1);
-          const isZero=t===0;
+          const b=toBN(t).toFixed(1);const isZero=t===0;
           return `<div style="position:absolute;left:0;right:0;bottom:${b}%;height:${isZero?'2px':'1px'};background:${isZero?'#ccc':'#f0f0f0'};"></div>`;
         }).join('');
         const bars=chartData.map(d=>{
@@ -377,15 +545,20 @@ const App = (() => {
           return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:12%;right:12%;height:${barH.toFixed(1)}%;background:${barColor};border-radius:${isNeg?'0 0 3px 3px':'3px 3px 0 0'};min-height:2px;"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
         }).join('');
         const monthRow=chartData.map(d=>{const isCur=d.y===mYear&&d.m===mMonth;return `<div style="flex:1;text-align:center;font-size:9px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};padding-top:3px;">${MO[d.m].replace('月','')}</div>`;}).join('');
-        const chartHtml=`<div class="pmc-wrap"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:30px;position:relative;height:170px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:170px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:30px;margin-top:0;">${monthRow}</div></div>`;
+        const chartH=Math.max(200,Math.min(520,window.innerHeight-400));
+        const chartHtml=`<div class="pmc-wrap" style="min-height:${chartH+90}px;"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:36px;position:relative;height:${chartH}px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:${chartH}px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:36px;margin-top:4px;">${monthRow}</div></div>`;
         body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${chartHtml}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
 
       }else if(tab==='yearly'){
-        const s=cs(fby(completedL,aYear));
-        const mrows=Array.from({length:12},(_,i)=>{const ms=cs(fbm(completedL,aYear,i));return `<tr><td>${MO[i]}</td><td class="n">${yen(ms.sales)}</td><td class="n" style="color:${ms.profit>=0?'var(--success)':'var(--danger)'};">${yen(ms.profit)}</td><td class="n">${ms.margin}%</td><td class="n">${ms.count}</td></tr>`;}).join('');
+        const s=yearObj(aYear);
+        const mrows=Array.from({length:12},(_,i)=>{const ms=msObj(aYear,i);return `<tr><td>${MO[i]}</td><td class="n">${yen(ms.sales)}</td><td class="n" style="color:${ms.profit>=0?'var(--success)':'var(--danger)'};">${yen(ms.profit)}</td><td class="n">${ms.margin}%</td><td class="n">${ms.count}</td></tr>`;}).join('');
         body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('y',-1)">‹</button><span class="ana-period-lbl">${aYear}年</span><button class="ana-nav" onclick="App._anaNav('y',1)">›</button></div>${sh(s)}<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>月</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">件数</th></tr></thead><tbody>${mrows}</tbody></table></div>`;
 
       }else if(tab==='ranking'){
+        // ランキングのみ listings を遅延ロード（IndexedDBキャッシュから）
+        const completedL = await getCompletedL();
+        const fbm=(list,y,m)=>list.filter(l=>{const d=new Date(l.saleDate||l.createdAt);return d.getFullYear()===y&&d.getMonth()===m;});
+        const fby=(list,y)=>list.filter(l=>new Date(l.saleDate||l.createdAt).getFullYear()===y);
         const list=rkPeriod==='month'?fbm(completedL,rkYear,rkMonth):fby(completedL,rkYear);
         const plbl=rkPeriod==='month'?`${rkYear}年${MO[rkMonth]}`:`${rkYear}年`;
         const pmap=Object.fromEntries(products.map(p=>[p.id,p]));
@@ -407,36 +580,27 @@ const App = (() => {
         body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='platform'){
-        const list=pfPeriod==='month'?fbm(completedL,pfYear,pfMonth):fby(completedL,pfYear);
+        // PF別: monthly_stats の platform 集計を使う（listings不要）
         const plbl=pfPeriod==='month'?`${pfYear}年${MO[pfMonth]}`:`${pfYear}年`;
         const pfmap={};
-        list.forEach(l=>{const pf=l.platform||'unknown';if(!pfmap[pf])pfmap[pf]={sales:0,profit:0,count:0};pfmap[pf].sales+=Number(l.salePrice)||0;pfmap[pf].profit+=Number(l.profit)||0;pfmap[pf].count++;});
+        if(pfPeriod==='month'){
+          const s=statsMap[mk(pfYear,pfMonth)];
+          if(s?.platform)Object.entries(s.platform).forEach(([k,v])=>{pfmap[k]={...v};});
+        }else{
+          for(let m=0;m<12;m++){
+            const s=statsMap[mk(pfYear,m)];
+            if(s?.platform)Object.entries(s.platform).forEach(([k,v])=>{if(!pfmap[k])pfmap[k]={sales:0,profit:0,count:0};pfmap[k].sales+=v.sales;pfmap[k].profit+=v.profit;pfmap[k].count+=v.count;});
+          }
+        }
         const sorted=Object.entries(pfmap).sort((a,b)=>b[1].sales-a[1].sales);
         const rows=sorted.map(([pfKey,s])=>{const pf=getPlatform(pfKey);const mg=s.sales>0?(s.profit/s.sales*100).toFixed(1):'0.0';return `<tr><td><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></td><td class="n">${yen(s.sales)}</td><td class="n" style="color:${s.profit>=0?'var(--success)':'var(--danger)'};">${yen(s.profit)}</td><td class="n">${s.count}</td><td class="n">${mg}%</td></tr>`;}).join('');
-        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${pfPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaPfPeriod('month')">月別</button><button class="ana-sbtn${pfPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaPfPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('p',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('p',1)">›</button></div>${sorted.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>プラットフォーム</th><th class="n">売上</th><th class="n">粗利</th><th class="n">件数</th><th class="n">利益率</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${pfPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaPfPeriod('month')">月別</button><button class="ana-sbtn${pfPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaPfPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('p',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('p',1)">›</button></div>${sorted.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl"><thead><tr><th>プラットフォーム</th><th class="n">売上</th><th class="n">利益</th><th class="n">件数</th><th class="n">利益率</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
       }
     }
 
     const TABS=[{k:'monthly',l:'月別'},{k:'yearly',l:'年別'},{k:'ranking',l:'ランキング'},{k:'platform',l:'PF別'}];
     main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
     renderContent();
-
-     // ===== プルトゥリフレッシュ（分析ページのみ）=====
-    {
-      const mainEl=document.getElementById('main');
-      let _ptrSY=0,_ptrReady=false,_ptrEl=null;
-
-      const _ptrShow=(txt)=>{
-        if(!_ptrEl){
-          _ptrEl=document.createElement('div');
-          _ptrEl.style.cssText='position:fixed;top:52px;left:0;right:0;max-width:480px;margin:0 auto;z-index:9999;text-align:center;padding:9px;font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-light);border-bottom:2px solid var(--primary);pointer-events:none;letter-spacing:0.03em;';
-          document.body.appendChild(_ptrEl);
-        }
-        _ptrEl.textContent=txt;
-      };
-
-      const _ptrHide=()=>{if(_ptrEl){_ptrEl.remove();_ptrEl=null;}};
-    }
 
     App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
     App._anaNav=(type,dir)=>{
@@ -848,31 +1012,10 @@ const App = (() => {
       swiper.scrollTo({left:next*swiper.offsetWidth,behavior:'smooth'});
     };
 
-    // プラットフォーム別取引閲覧モーダル
+    // プラットフォーム別取引一覧 → 出品一覧ページへ遷移（pfKeyフィルター付き）
     App._showPfListings=pfKey=>{
       const pf=getPlatform(pfKey);
-      const pfAll=listings.filter(l=>(l.platform||'other')===pfKey);
-      pfAll.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
-      let viewTab='all';
-      const ov=document.createElement('div');
-      ov.className='status-popup-overlay';
-      ov.style.alignItems='flex-end';
-      const render=()=>{
-        const getList=()=>{
-          if(viewTab==='trading') return pfAll.filter(l=>!['completed','canceled','cancelled'].includes(l.status));
-          if(viewTab==='completed') return pfAll.filter(l=>l.status==='completed');
-          return pfAll;
-        };
-        const list=getList();
-        const tabs=[{k:'all',l:'全て'},{k:'trading',l:'取引中'},{k:'completed',l:'完了'}];
-        const tabBtns=tabs.map(t=>`<button class="filter-tab${viewTab===t.k?' active':''}" style="flex:1;" onclick="App._pfTab('${t.k}')">${t.l}</button>`).join('');
-        const rows=list.length===0?'<div class="empty-state" style="min-height:100px;"><p>取引がありません</p></div>':list.map(l=>{const st=STATUS_MAP[l.status]||STATUS_MAP.before;const profit=Number(l.profit)||0;return `<div class="listing-item"><div class="listing-body"><div class="listing-top"><span class="listing-date">${fmtDate(l.saleDate)}</span><span class="listing-price-top">${yen(l.salePrice)}</span></div><div class="listing-sku">${esc(l.productName)}</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px;"><span class="badge ${st.badge}">${st.label}</span><span style="font-size:12px;color:${profit>=0?'var(--success)':'var(--danger)'};">利益 ${yen(profit)}</span></div></div></div>`;}).join('');
-        ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;"><div style="padding:14px 16px 10px;border-bottom:1px solid var(--gray-border);flex-shrink:0;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span style="font-size:15px;font-weight:700;"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span> 取引一覧</span><button onclick="this.closest('.status-popup-overlay').remove()" style="color:var(--text-secondary);font-size:22px;padding:2px 8px;line-height:1;">×</button></div><div class="filter-tabs" style="border:none;margin:0;padding:0;">${tabBtns}</div></div><div style="overflow-y:auto;flex:1;">${rows}</div></div>`;
-      };
-      App._pfTab=t=>{viewTab=t;render();};
-      render();
-      document.body.appendChild(ov);
-      ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+      navigate('listings',{id,pfKey},`${pf.name} 取引一覧`);
     };
   }
 
@@ -1057,7 +1200,7 @@ const App = (() => {
             <button type="button" onclick="App._step('f-stock',1)">＋</button>
           </div>
         </div>
-        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="document.getElementById('f-category').value=this.dataset.cat">${esc(c)}</button>`).join('')}</div></div></div>
+        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div></div></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
@@ -1157,6 +1300,15 @@ const App = (() => {
 
   function _removePhoto(idx){_currentPhotos.splice(idx,1);_renderPhotoGrid?.();}
   function _step(id,d){const el=document.getElementById(id);if(el)el.value=Math.max(0,(Number(el.value)||0)+d);}
+
+  function _selectCat(btn){
+    const cat=btn?.dataset?.cat;if(!cat)return;
+    const inp=document.getElementById('f-category');if(inp)inp.value=cat;
+    const sc=document.getElementById('__cat-sc');
+    if(sc&&btn.parentNode===sc){sc.insertBefore(btn,sc.firstChild);}
+    const newOrder=[...document.querySelectorAll('#__cat-sc .cat-sc-btn')].map(b=>b.dataset.cat);
+    db.put('settings',{key:'recentCategories',value:newOrder}).catch(()=>{});
+  }
 
   async function _stockIn(productId){
     const p=await db.get('products',productId);
@@ -1385,13 +1537,16 @@ const App = (() => {
   // =====================================================================
   // LISTINGS
   // =====================================================================
-  async function pgListings(main,{id:productId},actionBtn){
+  async function pgListings(main,{id:productId, pfKey},actionBtn){
     const product=productId?await db.get('products',productId):null;
     let listings=productId?await db.getAllByIndex('listings','productId',productId):await db.getAll('listings');
+    if(pfKey) listings=listings.filter(l=>(l.platform||'other')===pfKey);
     listings.sort((a,b)=>b.createdAt-a.createdAt);
-    actionBtn.className='header-btn pill-btn'; actionBtn.textContent='＋追加';
-    actionBtn.onclick=()=>navigate('sale-form',{productId,productName:product?.name||'',purchasePrice:product?.purchasePrice||0},'売上を記録');
-    let filterStatus='all';
+    if(pfKey){actionBtn.className='header-btn hidden';}
+    else{actionBtn.className='header-btn pill-btn'; actionBtn.textContent='＋追加';
+    actionBtn.onclick=()=>navigate('sale-form',{productId,productName:product?.name||'',purchasePrice:product?.purchasePrice||0},'売上を記録');}
+    // pfKeyモードは「取引中」デフォルト、通常は「すべて」
+    let filterStatus=pfKey?'active':'all';
 
     function grouped(list){
       const groups={};
@@ -1428,23 +1583,29 @@ const App = (() => {
     function renderList(){
       const body=document.getElementById('__listing-body');
       if(!body) return;
-      const list=filterStatus==='all'?listings:listings.filter(l=>{
+      const list=listings.filter(l=>{
+        if(filterStatus==='all') return true;
+        if(filterStatus==='active') return!['completed','canceled','cancelled'].includes(l.status);
         if(filterStatus==='trading') return['payment','shipping','review','listing'].includes(l.status);
         return l.status===filterStatus;
       });
-      if(!list.length){body.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>出品がありません</p></div>`;return;}
+      if(!list.length){body.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>取引がありません</p></div>`;return;}
       body.innerHTML=grouped(list);
     }
 
+    // pfKeyモード: 取引中・取引完了のみ表示
+    const tabsHtml=pfKey
+      ?`<button class="filter-tab${filterStatus==='active'?' active':''}" data-f="active">取引中</button>
+         <button class="filter-tab${filterStatus==='completed'?' active':''}" data-f="completed">取引完了</button>`
+      :`<button class="filter-tab${filterStatus==='all'?' active':''}" data-f="all">すべて</button>
+        <button class="filter-tab${filterStatus==='trading'?' active':''}" data-f="trading">取引中</button>
+        <button class="filter-tab${filterStatus==='completed'?' active':''}" data-f="completed">完了</button>
+        <button class="filter-tab${filterStatus==='before'?' active':''}" data-f="before">出品前</button>
+        <button class="filter-tab${filterStatus==='listing'?' active':''}" data-f="listing">出品中</button>
+        <button class="filter-tab${filterStatus==='canceled'?' active':''}" data-f="canceled">キャンセル</button>`;
+
     main.innerHTML=`
-      <div class="filter-tabs">
-        <button class="filter-tab active" data-f="all">すべて</button>
-        <button class="filter-tab" data-f="trading">取引中</button>
-        <button class="filter-tab" data-f="completed">完了</button>
-        <button class="filter-tab" data-f="before">出品前</button>
-        <button class="filter-tab" data-f="listing">出品中</button>
-        <button class="filter-tab" data-f="canceled">キャンセル</button>
-      </div>
+      <div class="filter-tabs">${tabsHtml}</div>
       <div id="__listing-body" class="page-pad"></div>`;
 
     renderList();
@@ -1476,8 +1637,21 @@ const App = (() => {
   // SALES（売上管理表）
   // =====================================================================
   async function pgSales(main,actionBtn){
-    const listings=await db.getAll('listings');
-    listings.sort((a,b)=>b.createdAt-a.createdAt);
+    const allListingsRaw=await db.getAll('listings');
+    allListingsRaw.sort((a,b)=>b.createdAt-a.createdAt);
+    // デフォルトは直近6ヶ月の完了/キャンセル + 全ての未完了を表示
+    // （データが増えても画面描画が重くならないようにする）
+    const _6mAgo = Date.now() - 180 * 24 * 60 * 60 * 1000;
+    let _salesShowAll = false;
+    function getListings() {
+      if (_salesShowAll) return allListingsRaw;
+      return allListingsRaw.filter(l => {
+        if (!['completed','cancelled','canceled'].includes(l.status)) return true;
+        const d = new Date(l.saleDate || l.createdAt || 0).getTime();
+        return d >= _6mAgo;
+      });
+    }
+    let listings = getListings();
     // 商品マスタ読み込み（更新日・仕入日ソート用）
     const allProducts=await db.getAll('products');
     const productMap=Object.fromEntries(allProducts.map(p=>[p.id,p]));
@@ -1732,11 +1906,20 @@ const App = (() => {
         body.innerHTML=filterStatus==='active'
           ?`<div class="empty-state"><div class="empty-icon">🎉</div><p>発送前の商品はありません</p><small>全て完了しています</small></div>`
           :`<div class="empty-state"><div class="empty-icon">💴</div><p>売上がありません</p></div>`;
+        // 非表示件数があれば「過去の取引も見る」ボタンを表示
+        if(!_salesShowAll && allListingsRaw.length > listings.length){
+          body.innerHTML+=`<div style="text-align:center;padding:16px;"><button class="btn btn-outline" onclick="App._salesShowAll()" style="font-size:13px;">過去の取引も見る（${allListingsRaw.length-listings.length}件）</button></div>`;
+        }
         return;
       }
-      body.innerHTML=buildGroups(list);
+      // 表示リストの末尾に「過去の取引も見る」ボタンを追加
+      const showMoreHtml = (!_salesShowAll && allListingsRaw.length > listings.length)
+        ? `<div style="text-align:center;padding:16px;"><button class="btn btn-outline" onclick="App._salesShowAll()" style="font-size:13px;">過去の取引も見る（${allListingsRaw.length-listings.length}件）</button></div>`
+        : '';
+      body.innerHTML=buildGroups(list)+showMoreHtml;
       setupSalesSwipe();
     }
+    App._salesShowAll=()=>{_salesShowAll=true;listings=getListings();renderList();};
 
     function renderCalendar(){
       const list=filtered();
@@ -2934,7 +3117,28 @@ const App = (() => {
     if(!photos.length){toast('画像がありません');return;}
     const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
     if(isIOS){
-      // iOSは長押し保存モーダルを表示
+      // Web Share API（iOS15+）で全ファイルを一括シェア→写真アプリに保存
+      if(navigator.share){
+        try{
+          toast('準備中...', 5000);
+          const files=photos.map((ph,i)=>{
+            const arr=ph.split(',');
+            const mime=arr[0].match(/:(.*?);/)?.[1]||'image/jpeg';
+            const b=atob(arr[1]||'');
+            const u8=new Uint8Array(b.length);
+            for(let j=0;j<b.length;j++)u8[j]=b.charCodeAt(j);
+            return new File([u8],`photo_${i+1}.jpg`,{type:mime});
+          });
+          const canShare=navigator.canShare?.({files}) ?? true;
+          if(canShare){
+            await navigator.share({files,title:'商品画像'});
+            return;
+          }
+        }catch(e){
+          if(e.name==='AbortError')return; // ユーザーがキャンセル
+        }
+      }
+      // フォールバック：ギャラリーモーダルで長押し保存
       const ov=document.createElement('div');
       ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;overflow-y:auto;-webkit-overflow-scrolling:touch;';
       ov.innerHTML=`<div style="padding:16px;color:#fff;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="font-size:15px;font-weight:700;">画像を保存（${photos.length}枚）</span><button onclick="this.closest('[style*=fixed]').remove()" style="color:#fff;font-size:26px;line-height:1;padding:4px 10px;">×</button></div><p style="font-size:12px;color:#ccc;margin-bottom:16px;line-height:1.5;">各画像を長押し →「写真に追加」で保存してください</p>${photos.map((ph,i)=>`<div style="margin-bottom:12px;"><img src="${ph}" style="width:100%;border-radius:8px;display:block;" alt="photo ${i+1}"></div>`).join('')}</div>`;
@@ -2953,8 +3157,10 @@ const App = (() => {
   }
 
   async function _export(){
-    const products=await db.getAll('products'),listings=await db.getAll('listings');
-    const data={version:2,exportedAt:new Date().toISOString(),products,listings,platforms:PLATFORMS,shippingShortcuts:SHIPPING_SHORTCUTS,janCodes:JAN_CODES};
+    const [products,listings,monthlyStats]=await Promise.all([
+      db.getAll('products'),db.getAll('listings'),db.getAll('monthly_stats')
+    ]);
+    const data={version:3,exportedAt:new Date().toISOString(),products,listings,monthlyStats,platforms:PLATFORMS,shippingShortcuts:SHIPPING_SHORTCUTS,janCodes:JAN_CODES};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download=`seller-note-${todayStr()}.json`;a.click();
@@ -3039,14 +3245,25 @@ const App = (() => {
       if(data.platforms){PLATFORMS=data.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
       if(data.shippingShortcuts&&data.shippingShortcuts.length){SHIPPING_SHORTCUTS=data.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
       if(data.janCodes&&data.janCodes.length){JAN_CODES=data.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
+      db.clearCache();
+      // monthly_statsをインポートデータから復元、なければバックフィル
+      if(data.monthlyStats&&data.monthlyStats.length){
+        for(const s of data.monthlyStats) await db.put('monthly_stats',s);
+        await db.put('settings',{key:'monthly_stats_v1',value:true});
+      } else {
+        await _backfillMonthlyStats();
+      }
       toast('インポートしました');await _render('settings',{},'設定');
     }catch(e){toast('インポート失敗: '+e.message);}
   }
   async function _clearAll(){
     const ok=await confirmDialog('全データを削除しますか？\nこの操作は取り消せません。');if(!ok)return;
-    const[ps,ls]=await Promise.all([db.getAll('products'),db.getAll('listings')]);
+    const[ps,ls,ms]=await Promise.all([db.getAll('products'),db.getAll('listings'),db.getAll('monthly_stats')]);
     for(const p of ps)await db.delete('products',p.id);
     for(const l of ls)await db.delete('listings',l.id);
+    for(const s of ms)await db.delete('monthly_stats',s.key);
+    await db.delete('settings','monthly_stats_v1');
+    db.clearCache();
     toast('削除しました');await _render('settings',{},'設定');
   }
 
@@ -3080,6 +3297,11 @@ const App = (() => {
     // DBから売上ソートモードを読み込む
     const savedSortMode=await db.get('settings','salesSortMode');
     if(savedSortMode?.value) _salesSortMode=savedSortMode.value;
+    // monthly_stats コールバックを登録
+    db.onListingChange = _syncMonthlyStats;
+    // 初回起動時のバックフィル（monthly_stats_v1フラグがなければ実行）
+    const msInit = await db.get('settings','monthly_stats_v1');
+    if (!msInit) { await _backfillMonthlyStats(); }
     // 前回のタブを読み込む
     const savedTab=await db.get('settings','lastTab');
     await switchTab(savedTab?.value||'home');
@@ -3093,7 +3315,7 @@ const App = (() => {
     _stockIn, _showOutboundSheet, _calcObProfit:()=>{},
     _deleteProduct, _saveSale,
     _copyText, _downloadAllPhotos, _photoNav:()=>{},
-    _showPfListings:()=>{}, _pfTab:()=>{},
+    _showPfListings:()=>{}, _pfTab:()=>{}, _selectCat,
     _selectPlatformSale:()=>{}, _updateCalc:()=>{},
     _onProdSel:()=>{}, _onShPreset:()=>{}, _selShortcut:()=>{},
     _toggleSel:()=>{}, _completeSale:()=>{}, _bulkComplete:()=>{},
