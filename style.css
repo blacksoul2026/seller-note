@@ -177,6 +177,7 @@ img { max-width: 100%; display: block; }
 }
 .product-grid-stock.low { background: rgba(245,124,0,0.9); }
 .product-grid-stock.out { background: rgba(198,40,40,0.9); }
+.product-grid-stock.high { background: rgba(33,150,243,0.9); }
 .product-grid-price {
   position: absolute;
   bottom: 26px;
@@ -235,6 +236,7 @@ img { max-width: 100%; display: block; }
 .grid-sort-btn { font-size: 13px; color: var(--primary); display: flex; align-items: center; gap: 4px; }
 .cat-filter-btn { display:inline-block; margin-right:8px; padding:5px 14px; border-radius:20px; font-size:13px; font-weight:600; background:var(--gray-light); color:var(--text-secondary); border:none; cursor:pointer; white-space:nowrap; }
 .cat-filter-btn.active { background:var(--primary); color:#fff; }
+.cat-sc-btn { display:inline-block; padding:4px 10px; border-radius:14px; font-size:12px; font-weight:600; background:#EEF2FF; color:#4B72E0; border:1px solid #C7D2FE; cursor:pointer; white-space:nowrap; }
 
 /* ===== SECTION HEADER ===== */
 .section-hd {
@@ -1348,5 +1350,7 @@ img { max-width: 100%; display: block; }
 /* ===== PRODUCT STATUS BADGE ===== */
 .prod-status-badge { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; vertical-align: middle; }
 .prod-status-active { background: #E8F5E9; color: #388E3C; }
-.prod-status-paused { background: #FFF3E0; color: #F57C00; }
+.prod-status-before_sale { background: #E3F2FD; color: #1565C0; }
+.prod-status-sold_out { background: #F5F5F5; color: #757575; }
 .prod-status-discontinued { background: #F5F5F5; color: #757575; }
+.prod-status-paused { background: #FFF3E0; color: #F57C00; }

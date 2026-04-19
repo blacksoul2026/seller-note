@@ -145,11 +145,8 @@ const SORT_OPTIONS = [
   {key:'createdAt_asc',  label:'作成日（古い順）'},
   {key:'purchaseDate_desc',label:'仕入れ日（新しい順）'},
   {key:'purchaseDate_asc', label:'仕入れ日（古い順）'},
-  {key:'name_asc',       label:'名前（あいうえお順）'},
   {key:'stock_asc',      label:'在庫（少ない順）'},
   {key:'stock_desc',     label:'在庫（多い順）'},
-  {key:'price_asc',      label:'仕入れ値（安い順）'},
-  {key:'price_desc',     label:'仕入れ値（高い順）'},
 ];
 
 // =====================================================================
@@ -343,18 +340,44 @@ const App = (() => {
 
       if(tab==='monthly'){
         const s=cs(fbm(completedL,mYear,mMonth));
-        // 直近6か月の利益棒グラフ
+        // 直近6か月の利益棒グラフ（改善版）
         const chartData=[];
         for(let i=5;i>=0;i--){let y=mYear,m=mMonth-i;while(m<0){m+=12;y--;}chartData.push({y,m,profit:cs(fbm(completedL,y,m)).profit});}
-        const maxAbs=Math.max(...chartData.map(d=>Math.abs(d.profit)),1);
-        const chartBars=chartData.map(d=>{
-          const isCur=d.y===mYear&&d.m===mMonth;
-          const neg=d.profit<0;
-          const pct=Math.round(Math.abs(d.profit)/maxAbs*100);
-          const barH=`${Math.max(pct,2)}%`;
-          return `<div class="pmc-col${isCur?' cur':''}"><div class="pmc-bar-area"><div class="pmc-bar${neg?' neg':''}" style="height:${barH};"></div></div><div class="pmc-lbl">${MO[d.m].replace('月','')}</div></div>`;
+        const profits=chartData.map(d=>d.profit);
+        const maxP=Math.max(...profits,0);
+        const minP=Math.min(...profits,0);
+        const spanP=maxP-minP||1;
+        const scaleMax=maxP+spanP*0.28;
+        const scaleMin=minP-spanP*0.08;
+        const scaleRange=scaleMax-scaleMin||1;
+        const toBN=v=>(v-scaleMin)/scaleRange*100;
+        const zeroB=toBN(0);
+        function calcTickStep(sp,n){const r=sp/n;const m=Math.pow(10,Math.floor(Math.log10(r||1)));return Math.ceil(r/m)*m;}
+        const step=calcTickStep(spanP,4)||100;
+        const yTicks=[];
+        for(let t=Math.floor(minP/step)*step;t<=maxP+step*0.1;t+=step)yTicks.push(t);
+        const yLabels=yTicks.map(t=>{
+          const b=toBN(t).toFixed(1);
+          const lbl=Math.abs(t)>=10000?(t/10000).toFixed(1)+'万':Math.abs(t)>=1000?(t/1000).toFixed(0)+'k':String(t);
+          return `<div style="position:absolute;bottom:${b}%;right:3px;transform:translateY(50%);font-size:8px;color:#bbb;white-space:nowrap;text-align:right;">${lbl}</div>`;
         }).join('');
-        const chartHtml=`<div class="pmc-wrap"><div class="pmc-title">直近6か月の利益</div><div class="pmc-chart">${chartBars}</div></div>`;
+        const gridLines=yTicks.map(t=>{
+          const b=toBN(t).toFixed(1);
+          const isZero=t===0;
+          return `<div style="position:absolute;left:0;right:0;bottom:${b}%;height:${isZero?'2px':'1px'};background:${isZero?'#ccc':'#f0f0f0'};"></div>`;
+        }).join('');
+        const bars=chartData.map(d=>{
+          const isCur=d.y===mYear&&d.m===mMonth;
+          const isNeg=d.profit<0;
+          const barBot=Math.min(toBN(d.profit),zeroB);
+          const barH=Math.max(Math.abs(toBN(d.profit)-zeroB),1);
+          const labelB=isNeg?barBot-13:toBN(d.profit)+2;
+          const pLabel=Math.abs(d.profit)>=10000?(d.profit<0?'-':'')+(Math.abs(d.profit)/10000).toFixed(1)+'万':d.profit===0?'0':yen(d.profit);
+          const barColor=isCur?(isNeg?'#C62828':'#E53935'):(isNeg?'#EF9A9A':'#81C784');
+          return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:12%;right:12%;height:${barH.toFixed(1)}%;background:${barColor};border-radius:${isNeg?'0 0 3px 3px':'3px 3px 0 0'};min-height:2px;"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
+        }).join('');
+        const monthRow=chartData.map(d=>{const isCur=d.y===mYear&&d.m===mMonth;return `<div style="flex:1;text-align:center;font-size:9px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};padding-top:3px;">${MO[d.m].replace('月','')}</div>`;}).join('');
+        const chartHtml=`<div class="pmc-wrap"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:30px;position:relative;height:170px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:170px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:30px;margin-top:0;">${monthRow}</div></div>`;
         body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${chartHtml}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
 
       }else if(tab==='yearly'){
@@ -380,7 +403,7 @@ const App = (() => {
         else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
         ranked=ranked.slice(0,30);
         const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'利益'},{k:'sales',l:'売上'},{k:'margin',l:'利益率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
-        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photo||'';const thumb=photo?`<img src="${photo}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">`:`<div style="width:48px;height:48px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
+        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photos?.[0]||'';const thumb=photo?`<img src="${photo}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">`:`<div style="width:48px;height:48px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
         body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='platform'){
@@ -454,11 +477,8 @@ const App = (() => {
         case 'createdAt_asc':  return arr.sort((a,b)=>a.createdAt-b.createdAt);
         case 'purchaseDate_desc': return arr.sort((a,b)=>new Date(b.purchaseDate||0)-new Date(a.purchaseDate||0));
         case 'purchaseDate_asc':  return arr.sort((a,b)=>new Date(a.purchaseDate||0)-new Date(b.purchaseDate||0));
-        case 'name_asc': return arr.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja'));
         case 'stock_asc': return arr.sort((a,b)=>(a.stockCount||0)-(b.stockCount||0));
         case 'stock_desc': return arr.sort((a,b)=>(b.stockCount||0)-(a.stockCount||0));
-        case 'price_asc': return arr.sort((a,b)=>(a.purchasePrice||0)-(b.purchasePrice||0));
-        case 'price_desc': return arr.sort((a,b)=>(b.purchasePrice||0)-(a.purchasePrice||0));
         default: return arr.sort((a,b)=>b.createdAt-a.createdAt);
       }
     }
@@ -502,9 +522,10 @@ const App = (() => {
       body.innerHTML=list.map(p=>{
         const thumb=p.photos?.[0]?`<img src="${p.photos[0]}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;">`:`<div class="product-grid-placeholder">📦</div>`;
         const stock=p.stockCount||0;
-        const stockBadge=`<div class="product-grid-stock ${stock===0?'out':stock<=2?'low':''}">${stock}</div>`;
+        const stockBadge=`<div class="product-grid-stock ${stock<=3?'out':stock<=10?'low':'high'}">${stock}</div>`;
         const pst=p.productStatus||'active';
-        const statusOverlay=pst!=='active'?`<div style="position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700;background:${pst==='paused'?'rgba(245,124,0,0.92)':'rgba(117,117,117,0.92)'};color:#fff;">${pst==='paused'?'休止':'廃番'}</div>`:'';
+        const _pstMap={before_sale:{lbl:'販売前',bg:'rgba(33,150,243,0.92)'},sold_out:{lbl:'売切れ',bg:'rgba(117,117,117,0.92)'},discontinued:{lbl:'廃盤',bg:'rgba(117,117,117,0.92)'},paused:{lbl:'休止',bg:'rgba(245,124,0,0.92)'}};
+        const statusOverlay=pst!=='active'&&_pstMap[pst]?`<div style="position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700;background:${_pstMap[pst].bg};color:#fff;">${_pstMap[pst].lbl}</div>`:'';
         const gridLabel=esc(p.name);
         return `<div class="product-grid-item" data-id="${p.id}" draggable="true"
           style="${p.hidden?'opacity:0.45;':''}"
@@ -689,17 +710,13 @@ const App = (() => {
     const totalProfit=done.reduce((a,l)=>a+(Number(l.profit)||0),0);
     const avgRoi=totalSales>0?(totalProfit/totalSales*100).toFixed(1):'0.0';
 
-    const statusCounts={};
-    LISTING_STATUSES.forEach(s=>{statusCounts[s.key]=0;});
-    listings.forEach(l=>{if(statusCounts[l.status]!==undefined)statusCounts[l.status]++;});
-
-    // プラットフォーム別販売数
+    // プラットフォーム別販売数（クリックで取引閲覧）
     const pfCounts={};
     done.forEach(l=>{const k=l.platform||'other';pfCounts[k]=(pfCounts[k]||0)+1;});
     const pfEntries=Object.entries(pfCounts).sort((a,b)=>b[1]-a[1]);
     const pfRows=pfEntries.map(([pfKey,cnt])=>{
       const pf=getPlatform(pfKey);
-      return `<div class="detail-row"><span class="detail-label"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></span><span class="detail-value">${cnt}個</span></div>`;
+      return `<div class="detail-row" style="cursor:pointer;" onclick="App._showPfListings('${pfKey}')"><span class="detail-label"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></span><span class="detail-value">${cnt}個 <span style="color:var(--text-secondary);font-size:12px;">›</span></span></div>`;
     }).join('')+(pfEntries.length>1?`<div class="detail-row" style="border-top:1px solid var(--gray-border);"><span class="detail-label" style="font-weight:600;">合計</span><span class="detail-value" style="font-weight:600;">${done.length}個</span></div>`:'');
 
     // 写真（スクエア表示 + 矢印ナビ）
@@ -745,7 +762,7 @@ const App = (() => {
         <div class="prod-detail-label">商品説明</div>
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
           <div style="flex:1;font-size:13px;white-space:pre-wrap;line-height:1.6;">${esc(product.description)}</div>
-          <button class="copy-btn" onclick="App._copyText(${JSON.stringify(product.description)},'説明文をコピーしました')" style="flex-shrink:0;">📋 取得</button>
+          <button id="__copy-desc" class="copy-btn" style="flex-shrink:0;">📋 取得</button>
         </div>
       </div>`:''}
 
@@ -760,7 +777,7 @@ const App = (() => {
       <!-- 商品詳細 -->
       <div class="section-hd">商品詳細</div>
       <div class="detail-group">
-        <div class="detail-row"><span class="detail-label">ステータス</span><span class="detail-value"><span class="prod-status-badge prod-status-${product.productStatus||'active'}">${{active:'販売中',paused:'販売休止',discontinued:'廃番'}[product.productStatus||'active']}</span></span></div>
+        <div class="detail-row"><span class="detail-label">ステータス</span><span class="detail-value"><span class="prod-status-badge prod-status-${product.productStatus||'active'}">${{active:'販売中',before_sale:'販売前',sold_out:'売切れ',discontinued:'廃盤',paused:'販売休止'}[product.productStatus||'active']||product.productStatus}</span></span></div>
         ${product.code?`<div class="detail-row"><span class="detail-label">管理番号</span><span class="detail-value">${esc(product.code)}</span></div>`:''}
         ${product.sku?`<div class="detail-row"><span class="detail-label">商品タイトル</span><span class="detail-value">${esc(product.sku)}</span></div>`:''}
         ${product.salePrice?`<div class="detail-row"><span class="detail-label">販売価格</span><span class="detail-value">${yen(product.salePrice)}</span></div>`:''}
@@ -781,22 +798,13 @@ const App = (() => {
         <div class="detail-row"><span class="detail-label">平均利益率</span><span class="detail-value">${avgRoi}%</span></div>
       </div>
 
-      ${pfRows?`<div class="section-hd">プラットフォーム別販売数</div><div class="detail-group">${pfRows}</div>`:''}
-
-      <!-- 出品情報 -->
-      <div class="section-hd">出品情報</div>
-      <div class="detail-group">
-        ${LISTING_STATUSES.map(s=>`<div class="detail-row"><span class="detail-label">${s.label}</span><span class="detail-value">${statusCounts[s.key]||0}個</span></div>`).join('')}
-        <div style="text-align:right;padding:10px 16px;">
-          <button style="color:var(--primary);font-size:14px;font-weight:500;" onclick="App.navigate('listings',{id:'${id}'},'出品一覧')">出品一覧 ›</button>
-        </div>
-      </div>
+      ${pfRows?`<div class="section-hd">プラットフォーム別販売数 <span style="font-size:11px;color:var(--text-secondary);font-weight:400;">▶ タップで取引確認</span></div><div class="detail-group">${pfRows}</div>`:''}
 
       <!-- メモ -->
       <div class="section-hd">メモ</div>
       <div style="background:var(--white);min-height:60px;padding:12px 16px;font-size:14px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
         <div style="flex:1;color:${product.memo?'var(--text)':'var(--text-secondary)'};">${product.memo?esc(product.memo):'（メモなし）'}</div>
-        ${product.memo?`<button class="copy-btn" onclick="App._copyText(${JSON.stringify(product.memo)},'メモをコピーしました')">📋 取得</button>`:''}
+        ${product.memo?`<button id="__copy-memo" class="copy-btn">📋 取得</button>`:''}
       </div>
 
       <!-- ボタン -->
@@ -804,6 +812,9 @@ const App = (() => {
         <button class="btn btn-outline-red btn-full" style="color:var(--danger);border-color:var(--danger);" onclick="App._deleteProduct('${id}')">削除</button>
       </div>
     </div>`;
+
+    document.getElementById('__copy-desc')?.addEventListener('click',()=>_copyText(product.description,'説明文をコピーしました'));
+    document.getElementById('__copy-memo')?.addEventListener('click',()=>_copyText(product.memo,'メモをコピーしました'));
 
     _currentProductPhotos=product.photos||[];
     const swiper=document.getElementById('__photo-swiper');
@@ -836,6 +847,33 @@ const App = (() => {
       const next=Math.max(0,Math.min(photoCount-1,cur+dir));
       swiper.scrollTo({left:next*swiper.offsetWidth,behavior:'smooth'});
     };
+
+    // プラットフォーム別取引閲覧モーダル
+    App._showPfListings=pfKey=>{
+      const pf=getPlatform(pfKey);
+      const pfAll=listings.filter(l=>(l.platform||'other')===pfKey);
+      pfAll.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
+      let viewTab='all';
+      const ov=document.createElement('div');
+      ov.className='status-popup-overlay';
+      ov.style.alignItems='flex-end';
+      const render=()=>{
+        const getList=()=>{
+          if(viewTab==='trading') return pfAll.filter(l=>!['completed','canceled','cancelled'].includes(l.status));
+          if(viewTab==='completed') return pfAll.filter(l=>l.status==='completed');
+          return pfAll;
+        };
+        const list=getList();
+        const tabs=[{k:'all',l:'全て'},{k:'trading',l:'取引中'},{k:'completed',l:'完了'}];
+        const tabBtns=tabs.map(t=>`<button class="filter-tab${viewTab===t.k?' active':''}" style="flex:1;" onclick="App._pfTab('${t.k}')">${t.l}</button>`).join('');
+        const rows=list.length===0?'<div class="empty-state" style="min-height:100px;"><p>取引がありません</p></div>':list.map(l=>{const st=STATUS_MAP[l.status]||STATUS_MAP.before;const profit=Number(l.profit)||0;return `<div class="listing-item"><div class="listing-body"><div class="listing-top"><span class="listing-date">${fmtDate(l.saleDate)}</span><span class="listing-price-top">${yen(l.salePrice)}</span></div><div class="listing-sku">${esc(l.productName)}</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px;"><span class="badge ${st.badge}">${st.label}</span><span style="font-size:12px;color:${profit>=0?'var(--success)':'var(--danger)'};">利益 ${yen(profit)}</span></div></div></div>`;}).join('');
+        ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;"><div style="padding:14px 16px 10px;border-bottom:1px solid var(--gray-border);flex-shrink:0;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span style="font-size:15px;font-weight:700;"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span> 取引一覧</span><button onclick="this.closest('.status-popup-overlay').remove()" style="color:var(--text-secondary);font-size:22px;padding:2px 8px;line-height:1;">×</button></div><div class="filter-tabs" style="border:none;margin:0;padding:0;">${tabBtns}</div></div><div style="overflow-y:auto;flex:1;">${rows}</div></div>`;
+      };
+      App._pfTab=t=>{viewTab=t;render();};
+      render();
+      document.body.appendChild(ov);
+      ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+    };
   }
 
   // =====================================================================
@@ -843,6 +881,8 @@ const App = (() => {
   // =====================================================================
   async function pgProductForm(main,{id}) {
     const product=id?await db.get('products',id):null;
+    const rcData=await db.get('settings','recentCategories');
+    const recentCats=rcData?.value||[];
     _currentPhotos=product?.photos?[...product.photos]:[];
 
     // ドラッグ状態（renderPhotoGrid外で管理してlistener重複を防ぐ）
@@ -995,9 +1035,10 @@ const App = (() => {
         <div class="form-row"><label class="form-label">管理番号</label><input class="form-input" id="f-code" type="text" placeholder="例: C-1215" value="${esc(product?.code||'')}"></div>
         <div class="form-row"><label class="form-label">ステータス</label>
           <select class="form-select" id="f-product-status">
+            <option value="before_sale" ${product?.productStatus==='before_sale'?'selected':''}>販売前</option>
             <option value="active" ${(!product?.productStatus||product?.productStatus==='active')?'selected':''}>販売中</option>
-            <option value="paused" ${product?.productStatus==='paused'?'selected':''}>販売休止</option>
-            <option value="discontinued" ${product?.productStatus==='discontinued'?'selected':''}>廃番</option>
+            <option value="sold_out" ${product?.productStatus==='sold_out'?'selected':''}>売切れ</option>
+            <option value="discontinued" ${product?.productStatus==='discontinued'?'selected':''}>廃盤</option>
           </select>
         </div>
       </div>
@@ -1016,7 +1057,7 @@ const App = (() => {
             <button type="button" onclick="App._step('f-stock',1)">＋</button>
           </div>
         </div>
-        <div class="form-row"><label class="form-label">種類</label><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"></div>
+        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="document.getElementById('f-category').value=this.dataset.cat">${esc(c)}</button>`).join('')}</div></div></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
@@ -1090,6 +1131,7 @@ const App = (() => {
         return;
       }
       toast(hasNewPhotos ? '✅ 写真をクラウドに保存しました' : '保存しました');
+      if(product.category){const rcD=await db.get('settings','recentCategories');let rc=rcD?.value||[];rc=[product.category,...rc.filter(c=>c!==product.category)].slice(0,10);await db.put('settings',{key:'recentCategories',value:rc});}
       pageStack.pop();
       const title=`${product.sku?product.sku+' ':''}${product.name}`;
       if(id) await _render('product-detail',{id},title);
@@ -1455,7 +1497,7 @@ const App = (() => {
 
     const FILTER_OPTS=[
       {key:'all',       label:'全て'},
-      {key:'active',    label:'発送前（未完了）'},
+      {key:'active',    label:'発送前'},
       {key:'completed', label:'取引完了'},
     ];
 
@@ -2890,10 +2932,22 @@ const App = (() => {
   async function _downloadAllPhotos(){
     const photos=_currentProductPhotos||[];
     if(!photos.length){toast('画像がありません');return;}
+    const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
+    if(isIOS){
+      // iOSは長押し保存モーダルを表示
+      const ov=document.createElement('div');
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;overflow-y:auto;-webkit-overflow-scrolling:touch;';
+      ov.innerHTML=`<div style="padding:16px;color:#fff;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="font-size:15px;font-weight:700;">画像を保存（${photos.length}枚）</span><button onclick="this.closest('[style*=fixed]').remove()" style="color:#fff;font-size:26px;line-height:1;padding:4px 10px;">×</button></div><p style="font-size:12px;color:#ccc;margin-bottom:16px;line-height:1.5;">各画像を長押し →「写真に追加」で保存してください</p>${photos.map((ph,i)=>`<div style="margin-bottom:12px;"><img src="${ph}" style="width:100%;border-radius:8px;display:block;" alt="photo ${i+1}"></div>`).join('')}</div>`;
+      document.body.appendChild(ov);
+      ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+      return;
+    }
+    // デスクトップ: ダウンロードリンクで保存
     toast(`${photos.length}枚を保存中...`);
     for(let i=0;i<photos.length;i++){
-      await new Promise(r=>setTimeout(r,300*i));
-      const a=document.createElement('a');a.href=photos[i];a.download=`photo_${i+1}.jpg`;a.click();
+      if(i>0) await new Promise(r=>setTimeout(r,300));
+      const a=document.createElement('a');a.href=photos[i];a.download=`photo_${i+1}.jpg`;
+      document.body.appendChild(a);a.click();a.remove();
     }
     toast(`✅ ${photos.length}枚を保存しました`);
   }
@@ -3039,6 +3093,7 @@ const App = (() => {
     _stockIn, _showOutboundSheet, _calcObProfit:()=>{},
     _deleteProduct, _saveSale,
     _copyText, _downloadAllPhotos, _photoNav:()=>{},
+    _showPfListings:()=>{}, _pfTab:()=>{},
     _selectPlatformSale:()=>{}, _updateCalc:()=>{},
     _onProdSel:()=>{}, _onShPreset:()=>{}, _selShortcut:()=>{},
     _toggleSel:()=>{}, _completeSale:()=>{}, _bulkComplete:()=>{},
