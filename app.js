@@ -749,7 +749,7 @@ const App = (() => {
         <p style="font-size:12px;color:#999;margin:0 0 10px;flex-shrink:0;">≡ を掴んで上下にドラッグして並び替えてください</p>
         <div id="__catord-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">${cats.map(c=>`
           <div class="catord-item" data-cat="${esc(c)}" style="display:flex;align-items:center;gap:10px;background:#f8f8f8;border-radius:8px;padding:10px 14px;touch-action:none;cursor:default;">
-            <span style="color:#bbb;font-size:20px;flex-shrink:0;cursor:grab;">≡</span>
+            <span data-handle="1" style="color:#bbb;font-size:20px;flex-shrink:0;cursor:grab;padding:4px 6px;">≡</span>
             <span style="flex:1;font-size:14px;font-weight:500;">${esc(c)}</span>
           </div>`).join('')}
         </div>
@@ -760,7 +760,8 @@ const App = (() => {
       const list=ov.querySelector('#__catord-list');
       let dragging=null;
       list.addEventListener('touchstart',e=>{
-        const item=e.target.closest('.catord-item');if(!item)return;
+        const handle=e.target.closest('span[data-handle]');if(!handle)return;
+        const item=handle.closest('.catord-item');if(!item)return;
         dragging=item;
         item.style.opacity='0.55';item.style.background='#e8eaff';
       },{passive:true});
