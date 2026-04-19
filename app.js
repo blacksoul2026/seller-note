@@ -1200,7 +1200,7 @@ const App = (() => {
             <button type="button" onclick="App._step('f-stock',1)">＋</button>
           </div>
         </div>
-        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div></div></div>
+        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div style="display:flex;align-items:flex-start;gap:4px;margin-top:6px;"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;flex:1;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div>${recentCats.length>1?`<button type="button" onclick="App._editCatOrder()" style="flex-shrink:0;padding:3px 7px;font-size:11px;background:#f0f0f0;border:1px solid #ddd;border-radius:10px;color:#666;cursor:pointer;white-space:nowrap;">並替</button>`:''}</div></div></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
@@ -1308,6 +1308,86 @@ const App = (() => {
     if(sc&&btn.parentNode===sc){sc.insertBefore(btn,sc.firstChild);}
     const newOrder=[...document.querySelectorAll('#__cat-sc .cat-sc-btn')].map(b=>b.dataset.cat);
     db.put('settings',{key:'recentCategories',value:newOrder}).catch(()=>{});
+  }
+
+  function _editCatOrder(){
+    const sc=document.getElementById('__cat-sc');
+    if(!sc)return;
+    const cats=[...sc.querySelectorAll('.cat-sc-btn')].map(b=>b.dataset.cat);
+    if(cats.length===0)return;
+
+    const ov=document.createElement('div');
+    ov.className='status-popup-overlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
+    ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));max-height:70vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:16px;font-weight:700;">カテゴリーを並び替え</span>
+        <div style="display:flex;gap:8px;">
+          <button id="__cat-del-mode" style="font-size:12px;padding:4px 10px;background:#fff;border:1px solid #ddd;border-radius:8px;color:#666;">削除</button>
+          <button id="__cat-done" style="font-size:13px;padding:6px 14px;background:#333;color:#fff;border:none;border-radius:8px;font-weight:600;">完了</button>
+        </div>
+      </div>
+      <div id="__cat-sort-list" style="display:flex;flex-direction:column;gap:6px;">${cats.map((c,i)=>`
+        <div class="cat-sort-item" data-cat="${esc(c)}" style="display:flex;align-items:center;gap:10px;background:#f8f8f8;border-radius:8px;padding:10px 12px;touch-action:none;">
+          <span style="color:#bbb;font-size:18px;cursor:grab;flex-shrink:0;">≡</span>
+          <span style="flex:1;font-size:14px;">${esc(c)}</span>
+          <button class="cat-del-btn" data-cat="${esc(c)}" style="display:none;color:#c62828;font-size:18px;padding:2px 6px;background:none;border:none;cursor:pointer;">✕</button>
+        </div>`).join('')}
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+
+    let delMode=false;
+    ov.querySelector('#__cat-del-mode').onclick=()=>{
+      delMode=!delMode;
+      ov.querySelector('#__cat-del-mode').textContent=delMode?'完了':'削除';
+      ov.querySelectorAll('.cat-del-btn').forEach(b=>b.style.display=delMode?'':'none');
+    };
+    ov.querySelectorAll('.cat-del-btn').forEach(b=>{
+      b.onclick=()=>{
+        b.closest('.cat-sort-item').remove();
+      };
+    });
+
+    // タッチドラッグで並び替え
+    const list=ov.querySelector('#__cat-sort-list');
+    let dragging=null,dragY=0,origIdx=0;
+    list.addEventListener('touchstart',e=>{
+      const item=e.target.closest('.cat-sort-item');if(!item)return;
+      dragging=item;
+      dragY=e.touches[0].clientY;
+      origIdx=[...list.children].indexOf(item);
+      item.style.opacity='0.6';
+      item.style.background='#e8eaff';
+    },{passive:true});
+    list.addEventListener('touchmove',e=>{
+      if(!dragging)return;
+      e.preventDefault();
+      const y=e.touches[0].clientY;
+      const items=[...list.querySelectorAll('.cat-sort-item')];
+      for(const it of items){
+        if(it===dragging)continue;
+        const r=it.getBoundingClientRect();
+        const mid=r.top+r.height/2;
+        if(y<mid){list.insertBefore(dragging,it);break;}
+        if(it===items[items.length-1]&&y>mid){list.appendChild(dragging);}
+      }
+    },{passive:false});
+    list.addEventListener('touchend',()=>{
+      if(!dragging)return;
+      dragging.style.opacity='';dragging.style.background='';dragging=null;
+    });
+
+    ov.querySelector('#__cat-done').onclick=()=>{
+      const newOrder=[...list.querySelectorAll('.cat-sort-item')].map(el=>el.dataset.cat);
+      // #__cat-sc のボタンを新順序で再描画
+      if(sc){
+        sc.innerHTML=newOrder.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('');
+      }
+      db.put('settings',{key:'recentCategories',value:newOrder}).catch(()=>{});
+      ov.remove();
+    };
   }
 
   async function _stockIn(productId){
@@ -3315,7 +3395,7 @@ const App = (() => {
     _stockIn, _showOutboundSheet, _calcObProfit:()=>{},
     _deleteProduct, _saveSale,
     _copyText, _downloadAllPhotos, _photoNav:()=>{},
-    _showPfListings:()=>{}, _pfTab:()=>{}, _selectCat,
+    _showPfListings:()=>{}, _pfTab:()=>{}, _selectCat, _editCatOrder,
     _selectPlatformSale:()=>{}, _updateCalc:()=>{},
     _onProdSel:()=>{}, _onShPreset:()=>{}, _selShortcut:()=>{},
     _toggleSel:()=>{}, _completeSale:()=>{}, _bulkComplete:()=>{},
