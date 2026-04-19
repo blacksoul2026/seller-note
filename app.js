@@ -359,7 +359,7 @@ const App = (() => {
         const yLabels=yTicks.map(t=>{
           const b=toBN(t).toFixed(1);
           const lbl=Math.abs(t)>=10000?(t/10000).toFixed(1)+'万':Math.abs(t)>=1000?(t/1000).toFixed(0)+'k':String(t);
-          return `<div style="position:absolute;bottom:${b}%;right:3px;transform:translateY(50%);font-size:8px;color:#bbb;white-space:nowrap;text-align:right;">${lbl}</div>`;
+          return `<div style="position:absolute;bottom:${b}%;right:2px;transform:translateY(50%);font-size:8px;color:#999;white-space:nowrap;text-align:right;line-height:1;">${lbl}</div>`;
         }).join('');
         const gridLines=yTicks.map(t=>{
           const b=toBN(t).toFixed(1);
@@ -377,7 +377,8 @@ const App = (() => {
           return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:12%;right:12%;height:${barH.toFixed(1)}%;background:${barColor};border-radius:${isNeg?'0 0 3px 3px':'3px 3px 0 0'};min-height:2px;"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
         }).join('');
         const monthRow=chartData.map(d=>{const isCur=d.y===mYear&&d.m===mMonth;return `<div style="flex:1;text-align:center;font-size:9px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};padding-top:3px;">${MO[d.m].replace('月','')}</div>`;}).join('');
-        const chartHtml=`<div class="pmc-wrap"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:30px;position:relative;height:170px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:170px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:30px;margin-top:0;">${monthRow}</div></div>`;
+        const chartH=Math.max(200,Math.min(520,window.innerHeight-400));
+        const chartHtml=`<div class="pmc-wrap" style="min-height:${chartH+90}px;"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:36px;position:relative;height:${chartH}px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:${chartH}px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:36px;margin-top:4px;">${monthRow}</div></div>`;
         body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${chartHtml}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
 
       }else if(tab==='yearly'){
@@ -848,31 +849,10 @@ const App = (() => {
       swiper.scrollTo({left:next*swiper.offsetWidth,behavior:'smooth'});
     };
 
-    // プラットフォーム別取引閲覧モーダル
+    // プラットフォーム別取引一覧 → 出品一覧ページへ遷移（pfKeyフィルター付き）
     App._showPfListings=pfKey=>{
       const pf=getPlatform(pfKey);
-      const pfAll=listings.filter(l=>(l.platform||'other')===pfKey);
-      pfAll.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
-      let viewTab='all';
-      const ov=document.createElement('div');
-      ov.className='status-popup-overlay';
-      ov.style.alignItems='flex-end';
-      const render=()=>{
-        const getList=()=>{
-          if(viewTab==='trading') return pfAll.filter(l=>!['completed','canceled','cancelled'].includes(l.status));
-          if(viewTab==='completed') return pfAll.filter(l=>l.status==='completed');
-          return pfAll;
-        };
-        const list=getList();
-        const tabs=[{k:'all',l:'全て'},{k:'trading',l:'取引中'},{k:'completed',l:'完了'}];
-        const tabBtns=tabs.map(t=>`<button class="filter-tab${viewTab===t.k?' active':''}" style="flex:1;" onclick="App._pfTab('${t.k}')">${t.l}</button>`).join('');
-        const rows=list.length===0?'<div class="empty-state" style="min-height:100px;"><p>取引がありません</p></div>':list.map(l=>{const st=STATUS_MAP[l.status]||STATUS_MAP.before;const profit=Number(l.profit)||0;return `<div class="listing-item"><div class="listing-body"><div class="listing-top"><span class="listing-date">${fmtDate(l.saleDate)}</span><span class="listing-price-top">${yen(l.salePrice)}</span></div><div class="listing-sku">${esc(l.productName)}</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px;"><span class="badge ${st.badge}">${st.label}</span><span style="font-size:12px;color:${profit>=0?'var(--success)':'var(--danger)'};">利益 ${yen(profit)}</span></div></div></div>`;}).join('');
-        ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;"><div style="padding:14px 16px 10px;border-bottom:1px solid var(--gray-border);flex-shrink:0;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span style="font-size:15px;font-weight:700;"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span> 取引一覧</span><button onclick="this.closest('.status-popup-overlay').remove()" style="color:var(--text-secondary);font-size:22px;padding:2px 8px;line-height:1;">×</button></div><div class="filter-tabs" style="border:none;margin:0;padding:0;">${tabBtns}</div></div><div style="overflow-y:auto;flex:1;">${rows}</div></div>`;
-      };
-      App._pfTab=t=>{viewTab=t;render();};
-      render();
-      document.body.appendChild(ov);
-      ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+      navigate('listings',{id,pfKey},`${pf.name} 取引一覧`);
     };
   }
 
@@ -1057,7 +1037,7 @@ const App = (() => {
             <button type="button" onclick="App._step('f-stock',1)">＋</button>
           </div>
         </div>
-        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="document.getElementById('f-category').value=this.dataset.cat">${esc(c)}</button>`).join('')}</div></div></div>
+        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div></div></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
@@ -1157,6 +1137,15 @@ const App = (() => {
 
   function _removePhoto(idx){_currentPhotos.splice(idx,1);_renderPhotoGrid?.();}
   function _step(id,d){const el=document.getElementById(id);if(el)el.value=Math.max(0,(Number(el.value)||0)+d);}
+
+  function _selectCat(btn){
+    const cat=btn?.dataset?.cat;if(!cat)return;
+    const inp=document.getElementById('f-category');if(inp)inp.value=cat;
+    const sc=document.getElementById('__cat-sc');
+    if(sc&&btn.parentNode===sc){sc.insertBefore(btn,sc.firstChild);}
+    const newOrder=[...document.querySelectorAll('#__cat-sc .cat-sc-btn')].map(b=>b.dataset.cat);
+    db.put('settings',{key:'recentCategories',value:newOrder}).catch(()=>{});
+  }
 
   async function _stockIn(productId){
     const p=await db.get('products',productId);
@@ -1385,12 +1374,14 @@ const App = (() => {
   // =====================================================================
   // LISTINGS
   // =====================================================================
-  async function pgListings(main,{id:productId},actionBtn){
+  async function pgListings(main,{id:productId, pfKey},actionBtn){
     const product=productId?await db.get('products',productId):null;
     let listings=productId?await db.getAllByIndex('listings','productId',productId):await db.getAll('listings');
+    if(pfKey) listings=listings.filter(l=>(l.platform||'other')===pfKey);
     listings.sort((a,b)=>b.createdAt-a.createdAt);
-    actionBtn.className='header-btn pill-btn'; actionBtn.textContent='＋追加';
-    actionBtn.onclick=()=>navigate('sale-form',{productId,productName:product?.name||'',purchasePrice:product?.purchasePrice||0},'売上を記録');
+    if(pfKey){actionBtn.className='header-btn hidden';}
+    else{actionBtn.className='header-btn pill-btn'; actionBtn.textContent='＋追加';
+    actionBtn.onclick=()=>navigate('sale-form',{productId,productName:product?.name||'',purchasePrice:product?.purchasePrice||0},'売上を記録');}
     let filterStatus='all';
 
     function grouped(list){
@@ -2934,7 +2925,28 @@ const App = (() => {
     if(!photos.length){toast('画像がありません');return;}
     const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
     if(isIOS){
-      // iOSは長押し保存モーダルを表示
+      // Web Share API（iOS15+）で全ファイルを一括シェア→写真アプリに保存
+      if(navigator.share){
+        try{
+          toast('準備中...', 5000);
+          const files=photos.map((ph,i)=>{
+            const arr=ph.split(',');
+            const mime=arr[0].match(/:(.*?);/)?.[1]||'image/jpeg';
+            const b=atob(arr[1]||'');
+            const u8=new Uint8Array(b.length);
+            for(let j=0;j<b.length;j++)u8[j]=b.charCodeAt(j);
+            return new File([u8],`photo_${i+1}.jpg`,{type:mime});
+          });
+          const canShare=navigator.canShare?.({files}) ?? true;
+          if(canShare){
+            await navigator.share({files,title:'商品画像'});
+            return;
+          }
+        }catch(e){
+          if(e.name==='AbortError')return; // ユーザーがキャンセル
+        }
+      }
+      // フォールバック：ギャラリーモーダルで長押し保存
       const ov=document.createElement('div');
       ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;overflow-y:auto;-webkit-overflow-scrolling:touch;';
       ov.innerHTML=`<div style="padding:16px;color:#fff;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="font-size:15px;font-weight:700;">画像を保存（${photos.length}枚）</span><button onclick="this.closest('[style*=fixed]').remove()" style="color:#fff;font-size:26px;line-height:1;padding:4px 10px;">×</button></div><p style="font-size:12px;color:#ccc;margin-bottom:16px;line-height:1.5;">各画像を長押し →「写真に追加」で保存してください</p>${photos.map((ph,i)=>`<div style="margin-bottom:12px;"><img src="${ph}" style="width:100%;border-radius:8px;display:block;" alt="photo ${i+1}"></div>`).join('')}</div>`;
@@ -3093,7 +3105,7 @@ const App = (() => {
     _stockIn, _showOutboundSheet, _calcObProfit:()=>{},
     _deleteProduct, _saveSale,
     _copyText, _downloadAllPhotos, _photoNav:()=>{},
-    _showPfListings:()=>{}, _pfTab:()=>{},
+    _showPfListings:()=>{}, _pfTab:()=>{}, _selectCat,
     _selectPlatformSale:()=>{}, _updateCalc:()=>{},
     _onProdSel:()=>{}, _onShPreset:()=>{}, _selShortcut:()=>{},
     _toggleSel:()=>{}, _completeSale:()=>{}, _bulkComplete:()=>{},
