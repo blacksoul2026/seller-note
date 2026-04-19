@@ -1262,7 +1262,7 @@ const App = (() => {
             <button type="button" onclick="App._step('f-stock',1)">＋</button>
           </div>
         </div>
-        <div class="form-row"><label class="form-label">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div style="display:flex;align-items:flex-start;gap:4px;margin-top:6px;"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;flex:1;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div>${recentCats.length>1?`<button type="button" onclick="App._editCatOrder()" style="flex-shrink:0;padding:3px 7px;font-size:11px;background:#f0f0f0;border:1px solid #ddd;border-radius:10px;color:#666;cursor:pointer;white-space:nowrap;">並替</button>`:''}</div></div></div>
+        <div class="form-row" style="align-items:flex-start;padding-top:12px;padding-bottom:10px;"><label class="form-label" style="padding-top:2px;">種類</label><div style="flex:1;"><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"><div id="__cat-sc" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">${recentCats.map(c=>`<button type="button" class="cat-sc-btn" data-cat="${esc(c)}" onclick="App._selectCat(this)">${esc(c)}</button>`).join('')}</div></div></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
