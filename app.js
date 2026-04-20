@@ -761,13 +761,15 @@ const App = (() => {
       ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
 
       const list=ov.querySelector('#__catord-list');
+      ov.addEventListener('contextmenu',e=>e.preventDefault());
       let dragging=null;
       list.addEventListener('touchstart',e=>{
         const handle=e.target.closest('span[data-handle]');if(!handle)return;
         const item=handle.closest('.catord-item');if(!item)return;
+        e.preventDefault(); // iOS長押しメニューを防ぐ
         dragging=item;
         item.style.opacity='0.55';item.style.background='#e8eaff';
-      },{passive:true});
+      },{passive:false});
       list.addEventListener('touchmove',e=>{
         if(!dragging)return;
         e.preventDefault();
@@ -818,6 +820,7 @@ const App = (() => {
       const allIds=[...visibleIds,...hiddenInOrder];
       _customOrder=allIds; _currentSort='custom';
       await db.put('settings',{key:'customProductOrder',value:allIds});
+      db.put('settings',{key:'productSortMode',value:'custom'}).catch(()=>{});
       renderGrid();
     }
 
@@ -923,7 +926,7 @@ const App = (() => {
     document.body.appendChild(overlay);
     overlay.addEventListener('click',e=>{
       const btn=e.target.closest('.status-popup-item');
-      if(btn){_currentSort=btn.dataset.key;App._refreshProductGrid?.();}
+      if(btn){_currentSort=btn.dataset.key;db.put('settings',{key:'productSortMode',value:_currentSort}).catch(()=>{});App._refreshProductGrid?.();}
       overlay.remove();
     });
   }
@@ -1423,17 +1426,18 @@ const App = (() => {
 
     // タッチドラッグで並び替え
     const list=ov.querySelector('#__cat-sort-list');
-    list.addEventListener('contextmenu',e=>e.preventDefault());
+    ov.addEventListener('contextmenu',e=>e.preventDefault());
     let dragging=null,dragY=0,origIdx=0;
     list.addEventListener('touchstart',e=>{
       const handle=e.target.closest('[data-handle]');if(!handle)return;
       const item=handle.closest('.cat-sort-item');if(!item)return;
+      e.preventDefault(); // iOS長押しメニュー（コピー/調べる/翻訳）を確実に防ぐ
       dragging=item;
       dragY=e.touches[0].clientY;
       origIdx=[...list.children].indexOf(item);
       item.style.opacity='0.6';
       item.style.background='#e8eaff';
-    },{passive:true});
+    },{passive:false});
     list.addEventListener('touchmove',e=>{
       if(!dragging)return;
       e.preventDefault();
@@ -2257,7 +2261,7 @@ const App = (() => {
       document.body.appendChild(ov);
       ov.addEventListener('click',e=>{
         const btn=e.target.closest('.status-popup-item');
-        if(btn){sortMode=btn.dataset.key;_salesSortMode=sortMode;db.put('settings',{key:'salesSortMode',value:_salesSortMode});setSortLabel();renderList();}
+        if(btn){sortMode=btn.dataset.key;_salesSortMode=sortMode;db.put('settings',{key:'salesSortMode',value:_salesSortMode}).catch(()=>{});setSortLabel();renderList();}
         ov.remove();
       });
     });
@@ -3434,6 +3438,10 @@ const App = (() => {
       _customOrder=savedOrder.value;
       _currentSort='custom';
     }
+    // DBから商品ソートモードを読み込む（customより優先して上書き）
+    const savedProductSort=await db.get('settings','productSortMode');
+    if(savedProductSort?.value) _currentSort=savedProductSort.value;
+    if(_currentSort==='custom'&&!_customOrder.length) _currentSort='createdAt_desc';
     // DBから送料プリセットを読み込む
     const savedShipping=await db.get('settings','shippingShortcuts');
     if(savedShipping?.value&&savedShipping.value.length) SHIPPING_SHORTCUTS=savedShipping.value;
