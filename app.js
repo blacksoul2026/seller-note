@@ -1105,6 +1105,7 @@ const App = (() => {
     const rcData=await db.get('settings','recentCategories');
     const recentCats=rcData?.value||[];
     _currentPhotos=product?.photos?[...product.photos]:[];
+    const _loadedPhotos=new Set(_currentPhotos); // 読み込み時点の写真セット（新規追加判定用）
 
     // ドラッグ状態（renderPhotoGrid外で管理してlistener重複を防ぐ）
     let _pds=null; // {src, clone, timer}
@@ -1347,7 +1348,7 @@ const App = (() => {
         createdAt:existing?.createdAt||Date.now(),
         updatedAt:Date.now(),
       };
-      const hasNewPhotos = (_currentPhotos||[]).some(p=>p.startsWith('data:'));
+      const hasNewPhotos = (_currentPhotos||[]).some(p=>!_loadedPhotos.has(p));
       if (hasNewPhotos) toast('📤 写真をクラウドにアップロード中...', 12000);
       try {
         await db.put('products',product);
