@@ -700,8 +700,9 @@ const App = (() => {
         const stockBadge=`<div class="product-grid-stock ${stock<=3?'out':stock<=10?'low':'high'}">${stock}</div>`;
         const pst=p.productStatus||'active';
         const _pstMap={before_sale:{lbl:'販売前',bg:'rgba(33,150,243,0.92)'},sold_out:{lbl:'売切れ',bg:'rgba(117,117,117,0.92)'},discontinued:{lbl:'廃盤',bg:'rgba(117,117,117,0.92)'},paused:{lbl:'休止',bg:'rgba(245,124,0,0.92)'}};
-        const statusOverlay=pst!=='active'&&_pstMap[pst]?`<div style="position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700;background:${_pstMap[pst].bg};color:#fff;">${_pstMap[pst].lbl}</div>`:'';
+        const statusOverlay=pst!=='active'&&_pstMap[pst]?`<div style="position:absolute;top:4px;right:4px;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700;background:${_pstMap[pst].bg};color:#fff;">${_pstMap[pst].lbl}</div>`:'';
         const gridLabel=esc(p.name);
+        const colorSize=[p.color,p.size].filter(Boolean).join(' / ');
         return `<div class="product-grid-item" data-id="${p.id}" draggable="true"
           style="${p.hidden?'opacity:0.45;':''}"
           onclick="if(App._gridDragOccurred)return;App.navigate('product-detail',{id:'${p.id}'},'${esc(p.name)}')"
@@ -710,6 +711,7 @@ const App = (() => {
           ${stockBadge}
           ${statusOverlay}
           ${p.salePrice?`<div class="product-grid-price">${yen(p.salePrice)}</div>`:''}
+          ${colorSize?`<div class="product-grid-colorsize">${esc(colorSize)}</div>`:''}
           <div class="product-grid-name">${gridLabel}</div>
         </div>`;
       }).join('');
@@ -1023,6 +1025,8 @@ const App = (() => {
         <div class="detail-row"><span class="detail-label">仕入日</span><span class="detail-value">${fmtDate(product.purchaseDate)}</span></div>
         ${product.purchaseSource?`<div class="detail-row"><span class="detail-label">仕入れ先</span><span class="detail-value">${esc(product.purchaseSource)}</span></div>`:''}
         ${product.category?`<div class="detail-row"><span class="detail-label">種類</span><span class="detail-value">${esc(product.category)}</span></div>`:''}
+        ${product.color?`<div class="detail-row"><span class="detail-label">カラー</span><span class="detail-value">${esc(product.color)}</span></div>`:''}
+        ${product.size?`<div class="detail-row"><span class="detail-label">サイズ</span><span class="detail-value">${esc(product.size)}</span></div>`:''}
         ${product.condition?`<div class="detail-row"><span class="detail-label">状態</span><span class="detail-value">${esc(product.condition)}</span></div>`:''}
       </div>
 
@@ -1275,6 +1279,8 @@ const App = (() => {
           </div>
         </div>
         <div class="form-row"><label class="form-label">種類</label><input class="form-input" id="f-category" type="text" placeholder="例: スケボー" value="${esc(product?.category||'')}"></div>
+        <div class="form-row"><label class="form-label">カラー</label><input class="form-input" id="f-color" type="text" placeholder="例: ブラック" value="${esc(product?.color||'')}"></div>
+        <div class="form-row"><label class="form-label">サイズ</label><input class="form-input" id="f-size" type="text" placeholder="例: M / 24cm" value="${esc(product?.size||'')}"></div>
         <div class="form-row"><label class="form-label">状態</label>
           <select class="form-select" id="f-condition">
             <option value="">（未設定）</option>
@@ -1332,6 +1338,8 @@ const App = (() => {
         purchaseSource:document.getElementById('f-purchaseSource')?.value?.trim()||'',
         stockCount:Number(document.getElementById('f-stock')?.value)||0,
         category:document.getElementById('f-category')?.value?.trim()||'',
+        color:document.getElementById('f-color')?.value?.trim()||'',
+        size:document.getElementById('f-size')?.value?.trim()||'',
         condition:document.getElementById('f-condition')?.value||'',
         description:document.getElementById('f-desc')?.value?.trim()||'',
         memo:document.getElementById('f-memo')?.value?.trim()||'',
@@ -2235,6 +2243,7 @@ const App = (() => {
 
     renderList();
     setFilterLabel(); // 前回のフィルター状態でラベルを初期化
+    setSortLabel();   // 前回のソート状態でラベルを初期化
 
     document.getElementById('__sales-search')?.addEventListener('input',e=>{searchQ=e.target.value.trim();renderList();});
 
