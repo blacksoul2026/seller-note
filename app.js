@@ -56,8 +56,11 @@ class DB {
       try {
         const snap = await window._fs.getDocsFromCache(this._col(store));
         const docs = snap.docs.map(d => d.data());
-        this._cache[store] = docs;
-        return [...docs];
+        if (docs.length > 0) {
+          this._cache[store] = docs;
+          return [...docs];
+        }
+        // 空はキャッシュ未完成の可能性があるのでネットワークへフォールバック
       } catch(e) { /* キャッシュミス → ネットワークへフォールバック */ }
     }
 
@@ -804,12 +807,17 @@ const App = (() => {
     async function doReorder(fromId, toId) {
       const g=document.getElementById('__product-grid');if(!g)return;
       const items=[...g.querySelectorAll('.product-grid-item[data-id]')];
-      const ids=items.map(i=>i.dataset.id);
-      const fromIdx=ids.indexOf(fromId), toIdx=ids.indexOf(toId);
+      const visibleIds=items.map(i=>i.dataset.id);
+      const fromIdx=visibleIds.indexOf(fromId), toIdx=visibleIds.indexOf(toId);
       if(fromIdx<0||toIdx<0) return;
-      ids.splice(fromIdx,1); ids.splice(toIdx,0,fromId);
-      _customOrder=ids; _currentSort='custom';
-      await db.put('settings',{key:'customProductOrder',value:ids});
+      visibleIds.splice(fromIdx,1); visibleIds.splice(toIdx,0,fromId);
+      // フィルター中でも全商品IDを含む完全な順序リストを構築
+      const allProductIds=products.map(p=>p.id);
+      const prevOrder=_customOrder.length?_customOrder:allProductIds;
+      const hiddenInOrder=prevOrder.filter(id=>!visibleIds.includes(id)&&allProductIds.includes(id));
+      const allIds=[...visibleIds,...hiddenInOrder];
+      _customOrder=allIds; _currentSort='custom';
+      await db.put('settings',{key:'customProductOrder',value:allIds});
       renderGrid();
     }
 
@@ -1382,17 +1390,17 @@ const App = (() => {
     const ov=document.createElement('div');
     ov.className='status-popup-overlay';
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
-    ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));max-height:70vh;overflow-y:auto;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    ov.innerHTML=`<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));max-height:75vh;display:flex;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">
         <span style="font-size:16px;font-weight:700;">カテゴリーを並び替え</span>
         <div style="display:flex;gap:8px;">
           <button id="__cat-del-mode" style="font-size:12px;padding:4px 10px;background:#fff;border:1px solid #ddd;border-radius:8px;color:#666;">削除</button>
           <button id="__cat-done" style="font-size:13px;padding:6px 14px;background:#333;color:#fff;border:none;border-radius:8px;font-weight:600;">完了</button>
         </div>
       </div>
-      <div id="__cat-sort-list" style="display:flex;flex-direction:column;gap:6px;">${cats.map((c,i)=>`
-        <div class="cat-sort-item" data-cat="${esc(c)}" style="display:flex;align-items:center;gap:10px;background:#f8f8f8;border-radius:8px;padding:10px 12px;touch-action:none;">
-          <span style="color:#bbb;font-size:18px;cursor:grab;flex-shrink:0;">≡</span>
+      <div id="__cat-sort-list" style="overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;min-height:0;display:flex;flex-direction:column;gap:6px;">${cats.map((c,i)=>`
+        <div class="cat-sort-item" data-cat="${esc(c)}" style="display:flex;align-items:center;gap:10px;background:#f8f8f8;border-radius:8px;padding:10px 12px;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none;">
+          <span data-handle="1" style="color:#bbb;font-size:18px;cursor:grab;flex-shrink:0;touch-action:none;padding:4px 6px;">≡</span>
           <span style="flex:1;font-size:14px;">${esc(c)}</span>
           <button class="cat-del-btn" data-cat="${esc(c)}" style="display:none;color:#c62828;font-size:18px;padding:2px 6px;background:none;border:none;cursor:pointer;">✕</button>
         </div>`).join('')}
@@ -1415,9 +1423,11 @@ const App = (() => {
 
     // タッチドラッグで並び替え
     const list=ov.querySelector('#__cat-sort-list');
+    list.addEventListener('contextmenu',e=>e.preventDefault());
     let dragging=null,dragY=0,origIdx=0;
     list.addEventListener('touchstart',e=>{
-      const item=e.target.closest('.cat-sort-item');if(!item)return;
+      const handle=e.target.closest('[data-handle]');if(!handle)return;
+      const item=handle.closest('.cat-sort-item');if(!item)return;
       dragging=item;
       dragY=e.touches[0].clientY;
       origIdx=[...list.children].indexOf(item);
