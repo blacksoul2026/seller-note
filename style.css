@@ -161,7 +161,7 @@ img { max-width: 100%; display: block; }
 .product-grid-stock {
   position: absolute;
   top: 4px;
-  right: 4px;
+  left: 4px;
   min-width: 22px;
   height: 22px;
   padding: 0 5px;
@@ -188,6 +188,21 @@ img { max-width: 100%; display: block; }
   padding: 2px 7px;
   font-size: 11px;
   font-weight: 700;
+}
+.product-grid-colorsize {
+  position: absolute;
+  bottom: 26px;
+  right: 4px;
+  background: rgba(0,0,0,0.55);
+  color: white;
+  border-radius: 10px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .product-grid-name {
   position: absolute;
