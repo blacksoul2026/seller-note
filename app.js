@@ -636,17 +636,14 @@ const App = (() => {
     let searchQ='', showHidden=false, selectedCategory='all';
     let _catOrder = catOrderData?.value || []; // カスタム並び順
 
-    // 最近売れた順ソート用マップ { productId: 最終売却日(YYYY-MM-DD) }
+    // 最近売れた順ソート用マップ { productId: 取引完了件数 }
     let _lastSoldMap = null;
     async function buildLastSoldMap() {
-      if (_lastSoldMap !== null) return;
       const allL = await db.getAll('listings');
       _lastSoldMap = {};
       allL.forEach(l => {
-        if (l.status === 'completed' && l.productId && l.saleDate) {
-          if (!_lastSoldMap[l.productId] || l.saleDate > _lastSoldMap[l.productId]) {
-            _lastSoldMap[l.productId] = l.saleDate;
-          }
+        if (l.status === 'completed' && l.productId) {
+          _lastSoldMap[l.productId] = (_lastSoldMap[l.productId] || 0) + 1;
         }
       });
     }
@@ -671,12 +668,10 @@ const App = (() => {
         case 'lastSold_desc': {
           const m=_lastSoldMap||{};
           return arr.sort((a,b)=>{
-            const da=m[a.id]||'';
-            const db_=m[b.id]||'';
-            if(!da&&!db_) return b.createdAt-a.createdAt;
-            if(!da) return 1;   // 未販売は後ろ
-            if(!db_) return -1;
-            return da>db_?-1:1;
+            const ca=m[a.id]||0;
+            const cb=m[b.id]||0;
+            if(ca===cb) return b.createdAt-a.createdAt;
+            return cb-ca;
           });
         }
         default: return arr.sort((a,b)=>b.createdAt-a.createdAt);
@@ -767,7 +762,9 @@ const App = (() => {
     renderGrid();
     renderCategoryBar();
     App._refreshProductGrid=async()=>{
-      if(_currentSort==='lastSold_desc') await buildLastSoldMap();
+      try {
+        if(_currentSort==='lastSold_desc') await buildLastSoldMap();
+      } catch(e) { _lastSoldMap={}; }
       renderGrid();
     };
     App._setCategoryFilter=(cat)=>{selectedCategory=cat;renderCategoryBar();renderGrid();};
