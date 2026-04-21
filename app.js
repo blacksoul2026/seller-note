@@ -308,6 +308,7 @@ const App = (() => {
   let pageStack = [];
   let _currentSort = 'createdAt_desc';
   let _currentPhotos = [];
+  let _loadedPhotos = new Set();
   let _renderPhotoGrid = null;
   let _currentProductPhotos = [];
   let _selPlatform = 'mercari';
@@ -1105,7 +1106,7 @@ const App = (() => {
     const rcData=await db.get('settings','recentCategories');
     const recentCats=rcData?.value||[];
     _currentPhotos=product?.photos?[...product.photos]:[];
-    const _loadedPhotos=new Set(_currentPhotos); // 読み込み時点の写真セット（新規追加判定用）
+    _loadedPhotos=new Set(_currentPhotos); // 読み込み時点の写真セット（新規追加判定用）
 
     // ドラッグ状態（renderPhotoGrid外で管理してlistener重複を防ぐ）
     let _pds=null; // {src, clone, timer}
