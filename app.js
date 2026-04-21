@@ -234,6 +234,7 @@ const SORT_OPTIONS = [
   {key:'purchaseDate_asc', label:'仕入れ日（古い順）'},
   {key:'stock_asc',      label:'在庫（少ない順）'},
   {key:'stock_desc',     label:'在庫（多い順）'},
+  {key:'lastSold_desc',  label:'最近売れた順'},
 ];
 
 // =====================================================================
@@ -635,6 +636,22 @@ const App = (() => {
     let searchQ='', showHidden=false, selectedCategory='all';
     let _catOrder = catOrderData?.value || []; // カスタム並び順
 
+    // 最近売れた順ソート用マップ { productId: 最終売却日(YYYY-MM-DD) }
+    let _lastSoldMap = null;
+    async function buildLastSoldMap() {
+      if (_lastSoldMap !== null) return;
+      const allL = await db.getAll('listings');
+      _lastSoldMap = {};
+      allL.forEach(l => {
+        if (l.status === 'completed' && l.productId && l.saleDate) {
+          if (!_lastSoldMap[l.productId] || l.saleDate > _lastSoldMap[l.productId]) {
+            _lastSoldMap[l.productId] = l.saleDate;
+          }
+        }
+      });
+    }
+    if (_currentSort === 'lastSold_desc') await buildLastSoldMap();
+
     function sortProducts(list) {
       const arr=[...list];
       switch(_currentSort){
@@ -651,6 +668,17 @@ const App = (() => {
         case 'purchaseDate_asc':  return arr.sort((a,b)=>new Date(a.purchaseDate||0)-new Date(b.purchaseDate||0));
         case 'stock_asc': return arr.sort((a,b)=>(a.stockCount||0)-(b.stockCount||0));
         case 'stock_desc': return arr.sort((a,b)=>(b.stockCount||0)-(a.stockCount||0));
+        case 'lastSold_desc': {
+          const m=_lastSoldMap||{};
+          return arr.sort((a,b)=>{
+            const da=m[a.id]||'';
+            const db_=m[b.id]||'';
+            if(!da&&!db_) return b.createdAt-a.createdAt;
+            if(!da) return 1;   // 未販売は後ろ
+            if(!db_) return -1;
+            return da>db_?-1:1;
+          });
+        }
         default: return arr.sort((a,b)=>b.createdAt-a.createdAt);
       }
     }
@@ -738,7 +766,10 @@ const App = (() => {
 
     renderGrid();
     renderCategoryBar();
-    App._refreshProductGrid=renderGrid;
+    App._refreshProductGrid=async()=>{
+      if(_currentSort==='lastSold_desc') await buildLastSoldMap();
+      renderGrid();
+    };
     App._setCategoryFilter=(cat)=>{selectedCategory=cat;renderCategoryBar();renderGrid();};
 
     App._editCategoryOrder=()=>{
@@ -1354,15 +1385,21 @@ const App = (() => {
       try {
         await db.put('products',product);
       } catch(e) {
-        toast('❌ エラー: ' + (e.message||e), 5000);
+        toast('❌ 保存エラー: ' + (e.message||e), 5000);
         return;
       }
       toast(hasNewPhotos ? '✅ 写真をクラウドに保存しました' : '保存しました');
       if(product.category){const rcD=await db.get('settings','recentCategories');let rc=rcD?.value||[];rc=[product.category,...rc.filter(c=>c!==product.category)].slice(0,10);await db.put('settings',{key:'recentCategories',value:rc});}
       pageStack.pop();
       const title=`${product.sku?product.sku+' ':''}${product.name}`;
-      if(id) await _render('product-detail',{id},title);
-      else await _render('products',{},'商品マスタ');
+      try {
+        if(id) await _render('product-detail',{id},title);
+        else await _render('products',{},'商品マスタ');
+      } catch(e) {
+        await _render('products',{},'商品マスタ');
+      }
+    } catch(e) {
+      toast('❌ エラー: ' + (e.message||String(e)), 5000);
     } finally {
       _productSaving = false;
     }
@@ -1673,6 +1710,7 @@ const App = (() => {
           id:uid(), productId, productName:product.name,
           photo:product.photos?.[0]||'',
           productTitle:product.sku||'', productCode:product.code||'',
+          productColor:product.color||'', productSize:product.size||'',
           platform:selPlatformKey, salePrice, purchasePrice:pp,
           feeRate, fee, shipping:sh, profit,
           saleDate, status, memo:'', createdAt:Date.now()+i,
@@ -1946,6 +1984,8 @@ const App = (() => {
         ?`<img src="${l.photo}" style="width:100%;height:100%;object-fit:cover;">`
         :`<span style="font-size:18px;">📦</span>`;
       const codeLine=l.productCode?`<div style="font-size:15px;color:var(--text);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(l.productCode)}</div>`:'';
+      const _cs=[l.productColor||productMap[l.productId]?.color,l.productSize||productMap[l.productId]?.size].filter(Boolean).join(' / ');
+      const colorSizeLine=_cs?`<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(_cs)}</div>`:'';
       const memoRow=l.memo?`<div style="font-size:11px;color:var(--text-secondary);padding:3px 0 0;border-top:1px solid var(--gray-border);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">📝 ${esc(l.memo)}</div>`:'';
       const onClickHandler=`if(this.closest('.sli-wrap').dataset.swiped){this.style.transition='transform 0.2s';this.style.transform='translateX(0)';delete this.closest('.sli-wrap').dataset.swiped;return;}App.navigate('sale-detail',{id:'${l.id}'},'売上詳細')`;
 
@@ -1961,6 +2001,7 @@ const App = (() => {
             <div class="sli-simple-body">
               <div class="sli-simple-name">${esc(l.productName)}</div>
               ${codeLine}
+              ${colorSizeLine}
               <div class="sli-simple-sub">
                 <span>${fmtDate(l.saleDate)}</span>
                 <span class="platform-badge" style="${platformBadgeStyle(l.platform)};font-size:10px;padding:1px 6px;">${p.name}</span>
@@ -1991,6 +2032,7 @@ const App = (() => {
               <div style="flex:1;min-width:0;">
                 <div class="sli-name">${esc(l.productName)}</div>
                 ${codeLine}
+                ${colorSizeLine}
               </div>
               <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
                 <button class="sli-status-btn ${l.status}" onclick="event.stopPropagation();App._showStatusPopupSale('${l.id}')">${st.label}</button>
@@ -2656,6 +2698,7 @@ const App = (() => {
       const listing={
         id:uid(),productId,productName,photo,
         productTitle:prod?.sku||'',productCode:prod?.code||'',
+        productColor:prod?.color||'',productSize:prod?.size||'',
         platform:_selPlatform||'mercari',salePrice,purchasePrice:pp,
         feeRate,fee,shipping,profit,
         saleDate:document.getElementById('f-saleDate')?.value||todayStr(),
