@@ -1354,15 +1354,21 @@ const App = (() => {
       try {
         await db.put('products',product);
       } catch(e) {
-        toast('❌ エラー: ' + (e.message||e), 5000);
+        toast('❌ 保存エラー: ' + (e.message||e), 5000);
         return;
       }
       toast(hasNewPhotos ? '✅ 写真をクラウドに保存しました' : '保存しました');
       if(product.category){const rcD=await db.get('settings','recentCategories');let rc=rcD?.value||[];rc=[product.category,...rc.filter(c=>c!==product.category)].slice(0,10);await db.put('settings',{key:'recentCategories',value:rc});}
       pageStack.pop();
       const title=`${product.sku?product.sku+' ':''}${product.name}`;
-      if(id) await _render('product-detail',{id},title);
-      else await _render('products',{},'商品マスタ');
+      try {
+        if(id) await _render('product-detail',{id},title);
+        else await _render('products',{},'商品マスタ');
+      } catch(e) {
+        await _render('products',{},'商品マスタ');
+      }
+    } catch(e) {
+      toast('❌ エラー: ' + (e.message||String(e)), 5000);
     } finally {
       _productSaving = false;
     }
