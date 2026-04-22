@@ -314,6 +314,7 @@ const App = (() => {
   let _currentProductPhotos = [];
   let _selPlatform = 'mercari';
   let _customOrder = [];
+  let _customOrders = {}; // カテゴリ別カスタム順 { 'all': [...], 'カテゴリ名': [...] }
   let _gridDragOccurred = false;
   let _salesItemMode = 'simple';     // 売上管理表の表示形式を永続化
   let _salesFilterStatus = 'active'; // 売上管理表のフィルタを永続化
@@ -410,6 +411,7 @@ const App = (() => {
     const actionBtn=document.getElementById('action-btn');
     const titleEl=document.getElementById('page-title');
     main.innerHTML='<div class="loading">読み込み中...</div>';
+    main.scrollTop=0;
     titleEl.textContent=title||page;
     // 戻るボタン: pageStackに2つ以上あれば表示
     backBtn.className='header-btn back-circle '+(pageStack.length>1?'':'hidden');
@@ -653,8 +655,9 @@ const App = (() => {
       const arr=[...list];
       switch(_currentSort){
         case 'custom': {
-          if(_customOrder.length){
-            const orderMap=Object.fromEntries(_customOrder.map((id,i)=>[id,i]));
+          const order=_customOrders[selectedCategory]||(selectedCategory==='all'?_customOrder:[]);
+          if(order.length){
+            const orderMap=Object.fromEntries(order.map((id,i)=>[id,i]));
             return arr.sort((a,b)=>(orderMap[a.id]??999999)-(orderMap[b.id]??999999));
           }
           return arr.sort((a,b)=>b.createdAt-a.createdAt);
@@ -846,11 +849,18 @@ const App = (() => {
       visibleIds.splice(fromIdx,1); visibleIds.splice(toIdx,0,fromId);
       // フィルター中でも全商品IDを含む完全な順序リストを構築
       const allProductIds=products.map(p=>p.id);
-      const prevOrder=_customOrder.length?_customOrder:allProductIds;
-      const hiddenInOrder=prevOrder.filter(id=>!visibleIds.includes(id)&&allProductIds.includes(id));
-      const allIds=[...visibleIds,...hiddenInOrder];
-      _customOrder=allIds; _currentSort='custom';
-      await db.put('settings',{key:'customProductOrder',value:allIds});
+      if(selectedCategory==='all'){
+        const prevOrder=_customOrder.length?_customOrder:allProductIds;
+        const hiddenInOrder=prevOrder.filter(id=>!visibleIds.includes(id)&&allProductIds.includes(id));
+        const allIds=[...visibleIds,...hiddenInOrder];
+        _customOrder=allIds;
+        await db.put('settings',{key:'customProductOrder',value:allIds});
+      } else {
+        // カテゴリ別カスタム順（表示中のIDのみ保存）
+        _customOrders[selectedCategory]=visibleIds;
+        await db.put('settings',{key:'customCategoryOrders',value:_customOrders});
+      }
+      _currentSort='custom';
       db.put('settings',{key:'productSortMode',value:'custom'}).catch(()=>{});
       renderGrid();
     }
@@ -2099,8 +2109,9 @@ const App = (() => {
       // 一括完了ボタンの件数更新
       const bulkBtn=document.getElementById('__bulk-ship-btn');
       if(bulkBtn){
-        if(list.length>0&&filterStatus==='active'){
-          bulkBtn.textContent=`✅ ${list.length}件を全て取引完了にする`;
+        const activeItems=list.filter(l=>!['completed','cancelled','canceled'].includes(l.status));
+        if(activeItems.length>0&&filterStatus!=='completed'){
+          bulkBtn.textContent=`✅ ${activeItems.length}件を全て取引完了にする`;
           bulkBtn.parentElement.classList.remove('hidden');
         } else {
           bulkBtn.parentElement.classList.add('hidden');
@@ -2386,7 +2397,7 @@ const App = (() => {
       toast('取引完了にしました');renderList();
     };
     App._bulkComplete=async()=>{
-      const list=filtered();
+      const list=filtered().filter(l=>!['completed','cancelled','canceled'].includes(l.status));
       if(!list.length)return;
       const ok=await confirmDialog(`発送待ち ${list.length}件を全て取引完了にしますか？\nこの操作で全件が画面から消えます。`,'全て完了','btn-success');
       if(!ok)return;
@@ -2898,7 +2909,7 @@ const App = (() => {
           <button id="__jan-sort-btn" class="grid-sort-btn">番号 ${sortDir === 'asc' ? '↑ 昇順' : '↓ 降順'}</button>
         </div>
         ${sorted.length === 0
-          ? '<div style="text-align:center;padding:40px 0;color:var(--text-secondary);font-size:14px;">JANコードがありません<br><span style="font-size:12px;">右上の＋追加ボタンで追加できます</span></div>'
+          ? '<div style="text-align:center;padding:40px 0;color:var(--text-secondary);font-size:14px;">ASIN・SKUがありません<br><span style="font-size:12px;">右上の＋追加ボタンで追加できます</span></div>'
           : `<div style="background:var(--white);border-radius:8px;overflow:hidden;">${sorted.map((item, i) => `
             <div style="display:flex;align-items:center;padding:12px 14px;${i > 0 ? 'border-top:1px solid var(--gray-border);' : ''}gap:12px;">
               ${item.photo
@@ -2910,7 +2921,6 @@ const App = (() => {
               </div>
               <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
                 <button onclick="App._editJanCode('${item.id}')" style="background:var(--gray-light);border:none;border-radius:6px;color:var(--text);font-size:12px;padding:5px 10px;cursor:pointer;white-space:nowrap;">編集</button>
-                <button onclick="App._deleteJanCode('${item.id}')" style="background:none;border:none;color:var(--danger);font-size:20px;padding:2px 10px;cursor:pointer;">✕</button>
               </div>
             </div>`).join('')}</div>`
         }
@@ -2924,7 +2934,7 @@ const App = (() => {
     renderList();
 
     App._deleteJanCode = async id => {
-      const ok = await confirmDialog('このJANコードを削除しますか？', '削除', 'btn-danger');
+      const ok = await confirmDialog('このASIN・SKUを削除しますか？', '削除', 'btn-danger');
       if (!ok) return;
       JAN_CODES = JAN_CODES.filter(j => j.id !== id);
       await db.put('settings', {key: 'janCodes', value: JAN_CODES});
@@ -2941,9 +2951,9 @@ const App = (() => {
     function showEditDialog(item) {
       const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
       ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
-        <h3 style="margin-bottom:16px;">JANコードを編集</h3>
+        <h3 style="margin-bottom:16px;">ASIN・SKUを編集</h3>
         <div style="margin-bottom:12px;">
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">JANコード番号</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">ASIN / SKU番号</div>
           <input id="__jan-edit-num" type="tel" value="${esc(item.number)}" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
         </div>
         <div style="margin-bottom:12px;">
@@ -2960,10 +2970,11 @@ const App = (() => {
             <div id="__jan-edit-thumb">${item.photo?`<img src="${item.photo}" style="width:52px;height:52px;object-fit:cover;border-radius:6px;">`:''}</div>
           </div>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
           <button id="__jan-edit-cancel" class="btn btn-gray btn-full">キャンセル</button>
           <button id="__jan-edit-save" class="btn btn-primary btn-full">保存</button>
         </div>
+        <button id="__jan-edit-delete" class="btn btn-full" style="color:var(--danger);border:1px solid var(--danger);font-size:13px;padding:10px;">削除する</button>
       </div>`;
       document.body.appendChild(ov);
 
@@ -2986,6 +2997,13 @@ const App = (() => {
         toast('更新しました'); ov.remove(); renderList();
       };
       document.getElementById('__jan-edit-cancel').onclick = () => ov.remove();
+      document.getElementById('__jan-edit-delete').onclick = async () => {
+        const ok = await confirmDialog('このASIN・SKUを削除しますか？', '削除', 'btn-danger');
+        if (!ok) return;
+        JAN_CODES = JAN_CODES.filter(j => j.id !== item.id);
+        await db.put('settings', {key: 'janCodes', value: JAN_CODES});
+        toast('削除しました'); ov.remove(); renderList();
+      };
       ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
       setTimeout(() => document.getElementById('__jan-edit-num')?.focus(), 100);
     }
@@ -2993,10 +3011,10 @@ const App = (() => {
     function showAddDialog() {
       const ov = document.createElement('div'); ov.className = 'status-popup-overlay'; ov.style.alignItems = 'flex-end';
       ov.innerHTML = `<div class="outbound-sheet" style="padding-bottom:24px;">
-        <h3 style="margin-bottom:16px;">JANコードを追加</h3>
+        <h3 style="margin-bottom:16px;">ASIN・SKUを追加</h3>
         <div style="margin-bottom:12px;">
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">JANコード番号</div>
-          <input id="__jan-num-input" type="tel" placeholder="例: 4901234567890" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">ASIN / SKU番号</div>
+          <input id="__jan-num-input" type="text" placeholder="例: B08N5WRWNW" class="form-input" style="width:100%;font-family:monospace;font-size:16px;box-sizing:border-box;" autocomplete="off">
         </div>
         <div style="margin-bottom:12px;">
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">SKU / 商品コード（任意）</div>
@@ -3058,9 +3076,9 @@ const App = (() => {
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">送料プリセットを管理</div><div style="font-size:12px;color:var(--text-secondary);">送料ショートカットの追加・編集（現在${SHIPPING_SHORTCUTS.length}件）</div></div>
           <span style="color:#BDBDBD;font-size:18px;">›</span>
         </div>
-        <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer;" onclick="App.navigate('jan-settings',{},'JANコード管理')">
+        <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer;" onclick="App.navigate('jan-settings',{},'ASIN・SKU管理')">
           <span style="font-size:22px;">🏷</span>
-          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">JANコードを管理</div><div style="font-size:12px;color:var(--text-secondary);">写真・番号の保存（現在${JAN_CODES.length}件）</div></div>
+          <div style="flex:1;"><div style="font-size:15px;font-weight:500;">ASIN・SKUを管理</div><div style="font-size:12px;color:var(--text-secondary);">ASIN・SKU・写真の保存（現在${JAN_CODES.length}件）</div></div>
           <span style="color:#BDBDBD;font-size:18px;">›</span>
         </div>
       </div>
@@ -3489,6 +3507,9 @@ const App = (() => {
       _customOrder=savedOrder.value;
       _currentSort='custom';
     }
+    // DBからカテゴリ別カスタム並び順を読み込む
+    const savedCatOrders=await db.get('settings','customCategoryOrders');
+    if(savedCatOrders?.value) _customOrders=savedCatOrders.value;
     // DBから商品ソートモードを読み込む（customより優先して上書き）
     const savedProductSort=await db.get('settings','productSortMode');
     if(savedProductSort?.value) _currentSort=savedProductSort.value;
