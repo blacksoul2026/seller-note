@@ -2900,13 +2900,13 @@ const App = (() => {
 
     function renderList() {
       const sorted = [...JAN_CODES].sort((a, b) => {
-        const cmp = (a.number || '').localeCompare(b.number || '', undefined, {numeric: true, sensitivity: 'base'});
+        const cmp = (a.sku || '').localeCompare(b.sku || '', undefined, {numeric: true, sensitivity: 'base'});
         return sortDir === 'asc' ? cmp : -cmp;
       });
       main.innerHTML = `<div class="page-pad" style="background:var(--gray-light);">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0 12px;">
           <span style="font-size:13px;color:var(--text-secondary);">${JAN_CODES.length}件</span>
-          <button id="__jan-sort-btn" class="grid-sort-btn">番号 ${sortDir === 'asc' ? '↑ 昇順' : '↓ 降順'}</button>
+          <button id="__jan-sort-btn" class="grid-sort-btn">SKU番号順 ${sortDir === 'asc' ? '↑' : '↓'}</button>
         </div>
         ${sorted.length === 0
           ? '<div style="text-align:center;padding:40px 0;color:var(--text-secondary);font-size:14px;">ASIN・SKUがありません<br><span style="font-size:12px;">右上の＋追加ボタンで追加できます</span></div>'
