@@ -39,7 +39,7 @@
   <div id="app" style="display:none;">
     <header id="header">
       <button id="back-btn" class="header-btn back-circle hidden" onclick="App.goBack()">‹</button>
-      <h1 id="page-title">分析</h1>
+      <h1 id="page-title" onclick="document.getElementById('main').scrollTo({top:0,behavior:'smooth'})" style="cursor:pointer;">分析</h1>
       <button id="action-btn" class="header-btn hidden"></button>
     </header>
 
