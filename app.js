@@ -420,7 +420,9 @@ const App = (() => {
   }
 
   async function navigate(page,params={},title='') {
-    pageStack.push({page,params,title});
+    const main=document.getElementById('main');
+    if(pageStack.length>0) pageStack[pageStack.length-1].scrollTop=main?.scrollTop||0;
+    pageStack.push({page,params,title,scrollTop:0});
     await _render(page,params,title);
   }
 
@@ -429,6 +431,8 @@ const App = (() => {
       pageStack.pop();
       const prev=pageStack[pageStack.length-1];
       await _render(prev.page,prev.params,prev.title);
+      const main=document.getElementById('main');
+      if(main&&prev.scrollTop){requestAnimationFrame(()=>{main.scrollTop=prev.scrollTop;});}
     } else {
       await switchTab(currentTab);
     }
@@ -441,6 +445,7 @@ const App = (() => {
     const titleEl=document.getElementById('page-title');
     main.innerHTML='<div class="loading">読み込み中...</div>';
     main.scrollTop=0;
+    requestAnimationFrame(()=>{main.scrollTop=0;});
     titleEl.textContent=title||page;
     // 戻るボタン: pageStackに2つ以上あれば表示
     backBtn.className='header-btn back-circle '+(pageStack.length>1?'':'hidden');
