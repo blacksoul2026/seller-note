@@ -576,8 +576,9 @@ const App = (() => {
           const barH=Math.max(Math.abs(toBN(d.profit)-zeroB),1);
           const labelB=isNeg?barBot-13:toBN(d.profit)+2;
           const pLabel=Math.abs(d.profit)>=10000?(d.profit<0?'-':'')+(Math.abs(d.profit)/10000).toFixed(1)+'万':d.profit===0?'0':yen(d.profit);
-          const barColor=isCur?(isNeg?'#C62828':'#E53935'):(isNeg?'#EF9A9A':'#81C784');
-          return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:12%;right:12%;height:${barH.toFixed(1)}%;background:${barColor};border-radius:${isNeg?'0 0 3px 3px':'3px 3px 0 0'};min-height:2px;"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
+          const barGrad=isCur?(isNeg?'linear-gradient(to top,#B71C1C,#EF5350)':'linear-gradient(to top,#E53935,#FF7043)'):(isNeg?'linear-gradient(to top,#E57373,#FFCDD2)':'linear-gradient(to top,#43A047,#A5D6A7)');
+          const shadow=isCur?'box-shadow:0 2px 8px rgba(0,0,0,0.18);':'';
+          return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:8%;right:8%;height:${barH.toFixed(1)}%;background:${barGrad};border-radius:${isNeg?'0 0 5px 5px':'5px 5px 0 0'};min-height:2px;${shadow}"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
         }).join('');
         const monthRow=chartData.map(d=>{const isCur=d.y===mYear&&d.m===mMonth;return `<div style="flex:1;text-align:center;font-size:9px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};padding-top:3px;">${MO[d.m].replace('月','')}</div>`;}).join('');
         const chartH=Math.max(200,Math.min(520,window.innerHeight-400));
@@ -611,8 +612,9 @@ const App = (() => {
         else ranked.sort((a,b)=>{const ma=a.sales>0?a.profit/a.sales:-Infinity,mb=b.sales>0?b.profit/b.sales:-Infinity;return mb-ma;});
         ranked=ranked.slice(0,30);
         const sbns=[{k:'qty',l:'販売数'},{k:'profit',l:'利益'},{k:'sales',l:'売上'},{k:'margin',l:'利益率'}].map(s=>`<button class="ana-sbtn${rkSort===s.k?' ana-sbtn-on':''}" onclick="App._anaRkSort('${s.k}')">${s.l}</button>`).join('');
-        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photos?.[0]||'';const thumb=photo?`<img src="${photo}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">`:`<div style="width:48px;height:48px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;return `<tr><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
-        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar">${sbns}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
+        const rows=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'−';const photo=pmap[item.pid]?.photos?.[0]||'';const thumb=photo?`<img src="${photo}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">`:`<div style="width:48px;height:48px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;const clickable=item.pid&&item.pid!=='__x';return `<tr style="${clickable?'cursor:pointer;':''}" ${clickable?`onclick="App.navigate('product-detail',{id:'${item.pid}'},'商品詳細')"`:''}><td class="n" style="color:var(--text-secondary);">${i+1}</td><td>${thumb}</td><td class="n">${item.qty}</td><td class="n">${yen(item.sales)}</td><td class="n" style="color:${item.profit>=0?'var(--success)':'var(--danger)'};">${yen(item.profit)}</td><td class="n">${mg}%</td><td class="n">${stk}</td></tr>`;}).join('');
+        App._anaRkCsv=()=>{const hdr=['順位','商品名','販売数','売上','利益','利益率','在庫'];const rws=ranked.map((item,i)=>{const mg=item.sales>0?(item.profit/item.sales*100).toFixed(1):'0.0';const stk=pmap[item.pid]?.stockCount??'';return[i+1,item.name,item.qty,item.sales,item.profit,mg+'%',stk];});const csv='\uFEFF'+[hdr,...rws].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=`ranking-${plbl}.csv`;a.click();toast('CSVを出力しました');};
+        body.innerHTML=`<div class="ana-period-bar"><div style="display:flex;gap:4px;"><button class="ana-sbtn${rkPeriod==='month'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('month')">月別</button><button class="ana-sbtn${rkPeriod==='year'?' ana-sbtn-on':''}" onclick="App._anaRkPeriod('year')">年間</button></div><button class="ana-nav" onclick="App._anaNav('r',-1)">‹</button><span class="ana-period-lbl">${plbl}</span><button class="ana-nav" onclick="App._anaNav('r',1)">›</button></div><div class="ana-sort-bar" style="display:flex;align-items:center;justify-content:space-between;""><div style="display:flex;gap:4px;">${sbns}</div>${ranked.length>0?`<button class="ana-sbtn" onclick="App._anaRkCsv()" style="font-size:11px;">CSV</button>`:''}</div>${ranked.length===0?'<div class="ana-empty">この期間の売上はありません</div>':`<div class="ana-tbl-wrap"><table class="ana-tbl ana-tbl-sm"><thead><tr><th>順</th><th></th><th class="n">販売数</th><th class="n">売上</th><th class="n">利益</th><th class="n">利益率</th><th class="n">在庫</th></tr></thead><tbody>${rows}</tbody></table></div>`}`;
 
       }else if(tab==='platform'){
         // PF別: monthly_stats の platform 集計を使う（listings不要）
@@ -3530,26 +3532,49 @@ const App = (() => {
   function _import(){document.getElementById('__import-file')?.click();}
   async function _onImport(input){
     const file=input.files?.[0];if(!file)return;
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;';
+    ov.innerHTML='<div style="color:#fff;font-size:15px;font-weight:600;text-align:center;" id="__ip-msg">読み込み中...</div><div style="width:220px;height:7px;background:rgba(255,255,255,0.25);border-radius:4px;overflow:hidden;"><div id="__ip-bar" style="width:0%;height:100%;background:#fff;border-radius:4px;transition:width 0.4s;"></div></div><div style="color:rgba(255,255,255,0.6);font-size:12px;" id="__ip-sub"></div>';
+    const setP=(msg,pct,sub='')=>{
+      const m=document.getElementById('__ip-msg'),b=document.getElementById('__ip-bar'),s=document.getElementById('__ip-sub');
+      if(m)m.textContent=msg;if(b)b.style.width=pct+'%';if(s)s.textContent=sub;
+    };
     try{
+      document.body.appendChild(ov);
+      setP('JSONを読み込み中...',10);
       const data=JSON.parse(await file.text());
       const prods=data.products||[], sales=data.listings||data.sales||[];
+      ov.remove();
       const ok=await confirmDialog(`商品${prods.length}件・売上${sales.length}件をインポートしますか？`,'インポート','btn-primary');
       if(!ok)return;
-      if(prods.length) await db.putBatch('products',prods,5);
-      if(sales.length) await db.putBatch('listings',sales,5);
+      document.body.appendChild(ov);
+      if(prods.length){
+        setP('商品をインポート中...',20,`${prods.length}件`);
+        await db.putBatch('products',prods,5);
+        setP('商品インポート完了',50,`✅ ${prods.length}件`);
+      }
+      if(sales.length){
+        setP('売上データをインポート中...',55,`${sales.length}件`);
+        await db.putBatch('listings',sales,5);
+        setP('売上インポート完了',80,`✅ ${sales.length}件`);
+      }
+      setP('設定を復元中...',85);
       if(data.platforms){PLATFORMS=data.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
       if(data.shippingShortcuts&&data.shippingShortcuts.length){SHIPPING_SHORTCUTS=data.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
       if(data.janCodes&&data.janCodes.length){JAN_CODES=data.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
       db.clearCache();
-      // monthly_statsをインポートデータから復元、なければバックフィル
+      setP('集計データを復元中...',90);
       if(data.monthlyStats&&data.monthlyStats.length){
         for(const s of data.monthlyStats) await db.put('monthly_stats',s);
         await db.put('settings',{key:'monthly_stats_v1',value:true});
       } else {
         await _backfillMonthlyStats();
       }
+      setP('✅ インポート完了！',100);
+      await new Promise(r=>setTimeout(r,700));
+      ov.remove();
       toast('インポートしました');await _render('settings',{},'設定');
-    }catch(e){toast('インポート失敗: '+e.message);}
+    }catch(e){ov.remove();toast('インポート失敗: '+e.message);}
   }
   async function _clearAll(){
     const ok=await confirmDialog('全データを削除しますか？\nこの操作は取り消せません。');if(!ok)return;
