@@ -121,14 +121,14 @@ class DB {
         if (idx>=0) this._cache[store][idx]=data; else this._cache[store].push(data);
       }
     }
-    // 400件ずつチャンクに分けて並列コミット
+    // チャンクに分けて逐次コミット（同時並列発火によるFirestoreレート制限エラーを防ぐ）
     const chunks = [];
     for (let i=0; i<docs.length; i+=CHUNK) chunks.push(docs.slice(i,i+CHUNK));
-    await Promise.all(chunks.map(chunk=>{
+    for (const chunk of chunks) {
       const batch = window._fs.writeBatch(window._firestore);
       for (const data of chunk) batch.set(this._doc(store, String(this._key(store,data))), data);
-      return batch.commit();
-    }));
+      await batch.commit();
+    }
     if (store==='listings'&&this.onListingChange) {
       for (const {old,data} of changes) this.onListingChange(old,data).catch(()=>{});
     }
@@ -1773,7 +1773,7 @@ const App = (() => {
       for(let i=0;i<obQty;i++){
         const listing={
           id:uid(), productId, productName:product.name,
-          photo:product.photos?.[0]||'',
+          photo:'',
           productTitle:product.sku||'', productCode:product.code||'',
           productColor:product.color||'', productSize:product.size||'',
           platform:selPlatformKey, salePrice, purchasePrice:pp,
@@ -2045,8 +2045,8 @@ const App = (() => {
       const profit=Number(l.profit)||0;
       const roi=l.salePrice>0?(profit/l.salePrice*100).toFixed(1):'0.0';
       const p=getPlatform(l.platform);
-      const thumb=l.photo
-        ?`<img src="${l.photo}" style="width:100%;height:100%;object-fit:cover;">`
+      const thumb=productMap[l.productId]?.photos?.[0]
+        ?`<img src="${productMap[l.productId].photos[0]}" style="width:100%;height:100%;object-fit:cover;">`
         :`<span style="font-size:18px;">📦</span>`;
       const codeLine=l.productCode?`<div style="font-size:15px;color:var(--text);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(l.productCode)}</div>`:'';
       const _cs=[l.productColor||productMap[l.productId]?.color,l.productSize||productMap[l.productId]?.size].filter(Boolean).join(' / ');
@@ -2755,7 +2755,7 @@ const App = (() => {
       const updated={
         ...existing,
         productId,productName,
-        photo:photo||existing.photo||'',
+        photo:'',
         platform:_selPlatform||existing.platform||'mercari',
         salePrice,purchasePrice:pp,
         feeRate,fee,shipping,profit,
