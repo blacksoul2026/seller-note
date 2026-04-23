@@ -983,11 +983,20 @@ const App = (() => {
 
     const listings=await db.getAllByIndex('listings','productId',id);
     const done=listings.filter(l=>l.status==='completed');
+    const active=listings.filter(l=>!['completed','cancelled','canceled'].includes(l.status));
     const totalQty=done.length;
     const totalSales=done.reduce((a,l)=>a+(Number(l.salePrice)||0),0);
     const totalCost=done.reduce((a,l)=>a+(Number(l.purchasePrice)||0)+(Number(l.fee)||0)+(Number(l.shipping)||0),0);
     const totalProfit=done.reduce((a,l)=>a+(Number(l.profit)||0),0);
     const avgRoi=totalSales>0?(totalProfit/totalSales*100).toFixed(1):'0.0';
+
+    // 取引中ステータス別集計
+    const activeStatusMap={};
+    active.forEach(l=>{const k=l.status||'before';activeStatusMap[k]=(activeStatusMap[k]||0)+1;});
+    const activeRows=Object.entries(activeStatusMap).map(([st,cnt])=>{
+      const s=STATUS_MAP[st]||STATUS_MAP.before;
+      return `<div class="detail-row"><span class="detail-label"><span class="badge ${s.badge}">${s.label}</span></span><span class="detail-value">${cnt}件</span></div>`;
+    }).join('');
 
     // プラットフォーム別販売数（クリックで取引閲覧）
     const pfCounts={};
@@ -1079,6 +1088,13 @@ const App = (() => {
         <div class="detail-row"><span class="detail-label">平均利益率</span><span class="detail-value">${avgRoi}%</span></div>
       </div>
 
+      ${active.length?`
+      <div class="section-hd" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>現在取引中 <span style="font-size:12px;color:var(--primary);font-weight:700;">${active.length}件</span></span>
+        <button onclick="App._showActiveListings()" style="font-size:12px;color:var(--primary);font-weight:600;background:none;border:none;padding:0 4px;cursor:pointer;">一覧を見る ›</button>
+      </div>
+      <div class="detail-group">${activeRows}</div>`:''}
+
       ${pfRows?`<div class="section-hd">プラットフォーム別販売数 <span style="font-size:11px;color:var(--text-secondary);font-weight:400;">▶ タップで取引確認</span></div><div class="detail-group">${pfRows}</div>`:''}
 
       <!-- メモ -->
@@ -1133,6 +1149,10 @@ const App = (() => {
     App._showPfListings=pfKey=>{
       const pf=getPlatform(pfKey);
       navigate('listings',{id,pfKey},`${pf.name} 取引一覧`);
+    };
+    // 取引中一覧 → 発送前フィルターで出品一覧ページへ
+    App._showActiveListings=()=>{
+      navigate('listings',{id,defaultFilter:'active'},'出品一覧');
     };
   }
 
@@ -1749,7 +1769,7 @@ const App = (() => {
   // =====================================================================
   // LISTINGS
   // =====================================================================
-  async function pgListings(main,{id:productId, pfKey},actionBtn){
+  async function pgListings(main,{id:productId, pfKey, defaultFilter},actionBtn){
     const product=productId?await db.get('products',productId):null;
     let listings=productId?await db.getAllByIndex('listings','productId',productId):await db.getAll('listings');
     if(pfKey) listings=listings.filter(l=>(l.platform||'other')===pfKey);
@@ -1757,8 +1777,8 @@ const App = (() => {
     if(pfKey){actionBtn.className='header-btn hidden';}
     else{actionBtn.className='header-btn pill-btn'; actionBtn.textContent='＋追加';
     actionBtn.onclick=()=>navigate('sale-form',{productId,productName:product?.name||'',purchasePrice:product?.purchasePrice||0},'売上を記録');}
-    // pfKeyモードは「取引中」デフォルト、通常は「すべて」
-    let filterStatus=pfKey?'active':'all';
+    // pfKeyモードは「取引中」デフォルト、defaultFilterがあればそれ、通常は「すべて」
+    let filterStatus=pfKey?'active':(defaultFilter||'all');
 
     function grouped(list){
       const groups={};
@@ -2081,6 +2101,9 @@ const App = (() => {
           `<div class="sales-month-hd" style="background:${g.color};">${g.label}（${g.items.length}件）</div>`+
           g.items.map(l=>renderItem(l)).join('')
         ).join('');
+      } else if(sortMode==='code_jp'||sortMode==='code_an'){
+        // 管理番号順 — グループ化せずフラットに全件表示
+        return list.map(l=>renderItem(l)).join('');
       } else {
         // 日付別グループ
         const groups={};
