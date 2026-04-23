@@ -345,6 +345,7 @@ const App = (() => {
   let _selPlatform = 'mercari';
   let _customOrder = [];
   let _customOrders = {}; // カテゴリ別カスタム順 { 'all': [...], 'カテゴリ名': [...] }
+  let _categorySortModes = {}; // カテゴリ別ソートモード { 'all': 'lastSold_desc', 'カテゴリA': 'custom' }
   let _gridDragOccurred = false;
   let _salesItemMode = 'simple';     // 売上管理表の表示形式を永続化
   let _salesFilterStatus = 'active'; // 売上管理表のフィルタを永続化
@@ -685,11 +686,15 @@ const App = (() => {
         }
       });
     }
-    if (_currentSort === 'lastSold_desc') await buildLastSoldMap();
+    if (_currentSort === 'lastSold_desc' || _categorySortModes[selectedCategory] === 'lastSold_desc') await buildLastSoldMap();
+
+    function getEffectiveSort() {
+      return selectedCategory==='all' ? _currentSort : (_categorySortModes[selectedCategory]??'createdAt_desc');
+    }
 
     function sortProducts(list) {
       const arr=[...list];
-      switch(_currentSort){
+      switch(getEffectiveSort()){
         case 'custom': {
           const order=_customOrders[selectedCategory]||(selectedCategory==='all'?_customOrder:[]);
           if(order.length){
@@ -749,7 +754,7 @@ const App = (() => {
       if(!body) return;
       const list=filtered();
       const countEl=document.getElementById('__grid-count');
-      const sortLabel=SORT_OPTIONS.find(s=>s.key===_currentSort)?.label||'新着順';
+      const sortLabel=SORT_OPTIONS.find(s=>s.key===getEffectiveSort())?.label||'新着順';
       if(countEl) countEl.textContent=`${list.length}件`;
       const sortEl=document.getElementById('__sort-label');
       if(sortEl) sortEl.textContent=sortLabel;
@@ -792,7 +797,7 @@ const App = (() => {
         <span class="grid-count" id="__grid-count">${products.length}件</span>
         <div style="display:flex;align-items:center;gap:8px;">
           <button id="__hidden-toggle" class="grid-sort-btn" style="color:var(--text-secondary);" onclick="App._toggleHidden()">非表示を表示</button>
-          <button class="grid-sort-btn" onclick="App._showSortSheet()">↕ <span id="__sort-label">${SORT_OPTIONS.find(s=>s.key===_currentSort)?.label||'新着順'}</span></button>
+          <button class="grid-sort-btn" onclick="App._showSortSheet()">↕ <span id="__sort-label">${SORT_OPTIONS.find(s=>s.key===(selectedCategory==='all'?_currentSort:(_categorySortModes[selectedCategory]??'createdAt_desc')))?.label||'新着順'}</span></button>
         </div>
       </div>
       <div class="product-grid" id="__product-grid" oncontextmenu="App._showSortSheet();event.preventDefault();"></div>
@@ -815,7 +820,7 @@ const App = (() => {
     updateCategoryBackBtn();
     App._refreshProductGrid=async()=>{
       try {
-        if(_currentSort==='lastSold_desc') await buildLastSoldMap();
+        if(getEffectiveSort()==='lastSold_desc') await buildLastSoldMap();
       } catch(e) { _lastSoldMap={}; }
       renderGrid();
     };
@@ -904,13 +909,15 @@ const App = (() => {
         const allIds=[...visibleIds,...hiddenInOrder];
         _customOrder=allIds;
         await db.put('settings',{key:'customProductOrder',value:allIds});
+        _currentSort='custom';
+        db.put('settings',{key:'productSortMode',value:'custom'}).catch(()=>{});
       } else {
         // カテゴリ別カスタム順（表示中のIDのみ保存）
         _customOrders[selectedCategory]=visibleIds;
         await db.put('settings',{key:'customCategoryOrders',value:_customOrders});
+        _categorySortModes[selectedCategory]='custom';
+        db.put('settings',{key:'categorySortModes',value:_categorySortModes}).catch(()=>{});
       }
-      _currentSort='custom';
-      db.put('settings',{key:'productSortMode',value:'custom'}).catch(()=>{});
       renderGrid();
     }
 
@@ -1007,16 +1014,27 @@ const App = (() => {
   }
 
   function _showSortSheet() {
+    const cat=_lastProductCategory;
+    const curSort=cat==='all'?_currentSort:(_categorySortModes[cat]??'createdAt_desc');
     const overlay=document.createElement('div');
     overlay.className='status-popup-overlay';
     overlay.innerHTML=`<div class="status-popup">
       <div style="padding:14px;font-weight:700;text-align:center;font-size:15px;border-bottom:1px solid var(--gray-border);">並び替え</div>
-      ${SORT_OPTIONS.map(s=>`<button class="status-popup-item ${_currentSort===s.key?'active':''}" data-key="${s.key}">${_currentSort===s.key?'✓ ':''} ${s.label}</button>`).join('')}
+      ${SORT_OPTIONS.map(s=>`<button class="status-popup-item ${curSort===s.key?'active':''}" data-key="${s.key}">${curSort===s.key?'✓ ':''} ${s.label}</button>`).join('')}
     </div>`;
     document.body.appendChild(overlay);
     overlay.addEventListener('click',e=>{
       const btn=e.target.closest('.status-popup-item');
-      if(btn){_currentSort=btn.dataset.key;db.put('settings',{key:'productSortMode',value:_currentSort}).catch(()=>{});App._refreshProductGrid?.();}
+      if(btn){
+        if(cat==='all'){
+          _currentSort=btn.dataset.key;
+          db.put('settings',{key:'productSortMode',value:_currentSort}).catch(()=>{});
+        } else {
+          _categorySortModes[cat]=btn.dataset.key;
+          db.put('settings',{key:'categorySortModes',value:_categorySortModes}).catch(()=>{});
+        }
+        App._refreshProductGrid?.();
+      }
       overlay.remove();
     });
   }
@@ -3625,6 +3643,9 @@ const App = (() => {
     // DBからカテゴリ別カスタム並び順を読み込む
     const savedCatOrders=await db.get('settings','customCategoryOrders');
     if(savedCatOrders?.value) _customOrders=savedCatOrders.value;
+    // DBからカテゴリ別ソートモードを読み込む
+    const savedCatSort=await db.get('settings','categorySortModes');
+    if(savedCatSort?.value) _categorySortModes=savedCatSort.value;
     // DBから商品ソートモードを読み込む（customより優先して上書き）
     const savedProductSort=await db.get('settings','productSortMode');
     if(savedProductSort?.value) _currentSort=savedProductSort.value;
