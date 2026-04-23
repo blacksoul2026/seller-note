@@ -336,6 +336,7 @@ const App = (() => {
   let currentTab = 'home';
   let pageStack = [];
   let _lastAnaTab = 'monthly';
+  let _lastProductCategory = 'all';
   let _currentSort = 'createdAt_desc';
   let _currentPhotos = [];
   let _loadedPhotos = new Set();
@@ -432,7 +433,7 @@ const App = (() => {
       const prev=pageStack[pageStack.length-1];
       await _render(prev.page,prev.params,prev.title);
       const main=document.getElementById('main');
-      if(main&&prev.scrollTop){setTimeout(()=>{main.scrollTop=prev.scrollTop;},80);}
+      if(main&&prev.scrollTop){setTimeout(()=>{main.scrollTop=prev.scrollTop;},120);}
     } else {
       await switchTab(currentTab);
     }
@@ -444,8 +445,6 @@ const App = (() => {
     const actionBtn=document.getElementById('action-btn');
     const titleEl=document.getElementById('page-title');
     main.innerHTML='<div class="loading">読み込み中...</div>';
-    main.scrollTop=0;
-    requestAnimationFrame(()=>{main.scrollTop=0;});
     titleEl.textContent=title||page;
     // 戻るボタン: pageStackに2つ以上あれば表示
     backBtn.className='header-btn back-circle '+(pageStack.length>1?'':'hidden');
@@ -473,6 +472,7 @@ const App = (() => {
       case 'shipping-settings': await pgShippingSettings(main,actionBtn); break;
       case 'jan-settings': await pgJanSettings(main,actionBtn); break;
     }
+    main.scrollTop=0;
   }
 
   function _setupSaveBtn(btn,fn){
@@ -671,7 +671,7 @@ const App = (() => {
     actionBtn.style.cssText='display:flex;gap:6px;background:none;border:none;padding:0;';
     actionBtn.onclick=null;
     actionBtn.innerHTML=`<button class="hbg-btn icon-pill" onclick="App.navigate('product-form',{},'商品を追加')" style="font-size:18px;">＋</button>`;
-    let searchQ='', showHidden=false, selectedCategory='all';
+    let searchQ='', showHidden=false, selectedCategory=_lastProductCategory;
     let _catOrder = catOrderData?.value || []; // カスタム並び順
 
     // 最近売れた順ソート用マップ { productId: 取引完了件数 }
@@ -806,7 +806,7 @@ const App = (() => {
       } catch(e) { _lastSoldMap={}; }
       renderGrid();
     };
-    App._setCategoryFilter=(cat)=>{selectedCategory=cat;renderCategoryBar();renderGrid();};
+    App._setCategoryFilter=(cat)=>{selectedCategory=cat;_lastProductCategory=cat;renderCategoryBar();renderGrid();};
 
     App._editCategoryOrder=()=>{
       const cats=getCategories();
