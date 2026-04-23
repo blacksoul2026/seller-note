@@ -2460,12 +2460,16 @@ const App = (() => {
     App._bulkComplete=async()=>{
       const list=filtered().filter(l=>!['completed','cancelled','canceled'].includes(l.status));
       if(!list.length)return;
-      const ok=await confirmDialog(`発送待ち ${list.length}件を全て取引完了にしますか？\nこの操作で全件が画面から消えます。`,'全て完了','btn-success');
+      const ok=await confirmDialog(`${list.length}件を全て取引完了にしますか？`,'全て完了','btn-success');
       if(!ok)return;
       const updated=list.map(l=>({...l,status:'completed'}));
       await db.putBatch('listings',updated);
-      updated.forEach(l=>{const idx=listings.findIndex(x=>x.id===l.id);if(idx>=0)listings[idx]=l;});
-      toast(`✅ ${list.length}件を取引完了にしました`);
+      // allListingsRaw と listings の両方を確実に更新
+      updated.forEach(l=>{
+        const i1=allListingsRaw.findIndex(x=>x.id===l.id);if(i1>=0)allListingsRaw[i1]=l;
+        const i2=listings.findIndex(x=>x.id===l.id);if(i2>=0)listings[i2]=l;
+      });
+      toast(`✅ ${updated.length}件を取引完了にしました`);
       renderList();
     };
 
@@ -3153,12 +3157,12 @@ const App = (() => {
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">バックアップ（JSONエクスポート）</div><div style="font-size:12px;color:var(--text-secondary);">商品${products.length}件・売上${listings.length}件</div></div>
           <span style="color:#BDBDBD;font-size:18px;">›</span>
         </div>
-        <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--gray-border);gap:12px;cursor:pointer;" onclick="App._import()">
+        <label for="__import-file" style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--gray-border);gap:12px;cursor:pointer;">
           <span style="font-size:22px;">📥</span>
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">インポート</div></div>
-          <input type="file" id="__import-file" accept=".json" style="display:none" onchange="App._onImport(this)">
+          <input type="file" id="__import-file" accept=".json" style="position:absolute;opacity:0;width:1px;height:1px;" onchange="App._onImport(this)">
           <span style="color:#BDBDBD;font-size:18px;">›</span>
-        </div>
+        </label>
         <div style="display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer;color:var(--danger);" onclick="App._clearAll()">
           <span style="font-size:22px;">🗑</span>
           <div style="flex:1;"><div style="font-size:15px;font-weight:500;">全データを削除</div></div>
@@ -3528,10 +3532,11 @@ const App = (() => {
     const file=input.files?.[0];if(!file)return;
     try{
       const data=JSON.parse(await file.text());
-      const ok=await confirmDialog(`商品${(data.products||[]).length}件・売上${(data.listings||data.sales||[]).length}件をインポートしますか？`,'インポート','btn-primary');
+      const prods=data.products||[], sales=data.listings||data.sales||[];
+      const ok=await confirmDialog(`商品${prods.length}件・売上${sales.length}件をインポートしますか？`,'インポート','btn-primary');
       if(!ok)return;
-      for(const p of(data.products||[]))await db.put('products',p);
-      for(const l of(data.listings||data.sales||[]))await db.put('listings',l);
+      if(prods.length) await db.putBatch('products',prods);
+      if(sales.length) await db.putBatch('listings',sales);
       if(data.platforms){PLATFORMS=data.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
       if(data.shippingShortcuts&&data.shippingShortcuts.length){SHIPPING_SHORTCUTS=data.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
       if(data.janCodes&&data.janCodes.length){JAN_CODES=data.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
@@ -3549,9 +3554,11 @@ const App = (() => {
   async function _clearAll(){
     const ok=await confirmDialog('全データを削除しますか？\nこの操作は取り消せません。');if(!ok)return;
     const[ps,ls,ms]=await Promise.all([db.getAll('products'),db.getAll('listings'),db.getAll('monthly_stats')]);
-    for(const p of ps)await db.delete('products',p.id);
-    for(const l of ls)await db.delete('listings',l.id);
-    for(const s of ms)await db.delete('monthly_stats',s.key);
+    await Promise.all([
+      ...ps.map(p=>db.delete('products',p.id)),
+      ...ls.map(l=>db.delete('listings',l.id)),
+      ...ms.map(s=>db.delete('monthly_stats',s.key)),
+    ]);
     await db.delete('settings','monthly_stats_v1');
     db.clearCache();
     toast('削除しました');await _render('settings',{},'設定');
