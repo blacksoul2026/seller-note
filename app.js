@@ -107,8 +107,8 @@ class DB {
     }
   }
 
-  async putBatch(store, docs) {
-    const CHUNK = 400; // Firestoreバッチ上限500の安全圏
+  async putBatch(store, docs, chunkSize = 400) {
+    const CHUNK = chunkSize; // Firestoreバッチ上限500の安全圏（写真入りデータは小さくする）
     const changes = [];
     // キャッシュ更新と変更記録（コミット前）
     for (const data of docs) {
@@ -3535,8 +3535,8 @@ const App = (() => {
       const prods=data.products||[], sales=data.listings||data.sales||[];
       const ok=await confirmDialog(`商品${prods.length}件・売上${sales.length}件をインポートしますか？`,'インポート','btn-primary');
       if(!ok)return;
-      if(prods.length) await db.putBatch('products',prods);
-      if(sales.length) await db.putBatch('listings',sales);
+      if(prods.length) await db.putBatch('products',prods,5);
+      if(sales.length) await db.putBatch('listings',sales,5);
       if(data.platforms){PLATFORMS=data.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
       if(data.shippingShortcuts&&data.shippingShortcuts.length){SHIPPING_SHORTCUTS=data.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
       if(data.janCodes&&data.janCodes.length){JAN_CODES=data.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
