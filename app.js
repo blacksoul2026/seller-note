@@ -576,8 +576,9 @@ const App = (() => {
           const barH=Math.max(Math.abs(toBN(d.profit)-zeroB),1);
           const labelB=isNeg?barBot-13:toBN(d.profit)+2;
           const pLabel=Math.abs(d.profit)>=10000?(d.profit<0?'-':'')+(Math.abs(d.profit)/10000).toFixed(1)+'万':d.profit===0?'0':yen(d.profit);
-          const barColor=isCur?(isNeg?'#C62828':'#E53935'):(isNeg?'#EF9A9A':'#81C784');
-          return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:12%;right:12%;height:${barH.toFixed(1)}%;background:${barColor};border-radius:${isNeg?'0 0 3px 3px':'3px 3px 0 0'};min-height:2px;"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
+          const barGrad=isCur?(isNeg?'linear-gradient(to top,#B71C1C,#EF5350)':'linear-gradient(to top,#E53935,#FF7043)'):(isNeg?'linear-gradient(to top,#E57373,#FFCDD2)':'linear-gradient(to top,#43A047,#A5D6A7)');
+          const shadow=isCur?'box-shadow:0 2px 8px rgba(0,0,0,0.18);':'';
+          return `<div style="flex:1;position:relative;"><div style="position:absolute;bottom:${barBot.toFixed(1)}%;left:8%;right:8%;height:${barH.toFixed(1)}%;background:${barGrad};border-radius:${isNeg?'0 0 5px 5px':'5px 5px 0 0'};min-height:2px;${shadow}"></div><div style="position:absolute;bottom:${labelB.toFixed(1)}%;left:0;right:0;text-align:center;font-size:8px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};white-space:nowrap;overflow:hidden;line-height:1;">${pLabel}</div></div>`;
         }).join('');
         const monthRow=chartData.map(d=>{const isCur=d.y===mYear&&d.m===mMonth;return `<div style="flex:1;text-align:center;font-size:9px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};padding-top:3px;">${MO[d.m].replace('月','')}</div>`;}).join('');
         const chartH=Math.max(200,Math.min(520,window.innerHeight-400));
@@ -3530,26 +3531,49 @@ const App = (() => {
   function _import(){document.getElementById('__import-file')?.click();}
   async function _onImport(input){
     const file=input.files?.[0];if(!file)return;
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;';
+    ov.innerHTML='<div style="color:#fff;font-size:15px;font-weight:600;text-align:center;" id="__ip-msg">読み込み中...</div><div style="width:220px;height:7px;background:rgba(255,255,255,0.25);border-radius:4px;overflow:hidden;"><div id="__ip-bar" style="width:0%;height:100%;background:#fff;border-radius:4px;transition:width 0.4s;"></div></div><div style="color:rgba(255,255,255,0.6);font-size:12px;" id="__ip-sub"></div>';
+    const setP=(msg,pct,sub='')=>{
+      const m=document.getElementById('__ip-msg'),b=document.getElementById('__ip-bar'),s=document.getElementById('__ip-sub');
+      if(m)m.textContent=msg;if(b)b.style.width=pct+'%';if(s)s.textContent=sub;
+    };
     try{
+      document.body.appendChild(ov);
+      setP('JSONを読み込み中...',10);
       const data=JSON.parse(await file.text());
       const prods=data.products||[], sales=data.listings||data.sales||[];
+      ov.remove();
       const ok=await confirmDialog(`商品${prods.length}件・売上${sales.length}件をインポートしますか？`,'インポート','btn-primary');
       if(!ok)return;
-      if(prods.length) await db.putBatch('products',prods,5);
-      if(sales.length) await db.putBatch('listings',sales,5);
+      document.body.appendChild(ov);
+      if(prods.length){
+        setP('商品をインポート中...',20,`${prods.length}件`);
+        await db.putBatch('products',prods,5);
+        setP('商品インポート完了',50,`✅ ${prods.length}件`);
+      }
+      if(sales.length){
+        setP('売上データをインポート中...',55,`${sales.length}件`);
+        await db.putBatch('listings',sales,5);
+        setP('売上インポート完了',80,`✅ ${sales.length}件`);
+      }
+      setP('設定を復元中...',85);
       if(data.platforms){PLATFORMS=data.platforms;await db.put('settings',{key:'platforms',value:PLATFORMS});}
       if(data.shippingShortcuts&&data.shippingShortcuts.length){SHIPPING_SHORTCUTS=data.shippingShortcuts;await db.put('settings',{key:'shippingShortcuts',value:SHIPPING_SHORTCUTS});}
       if(data.janCodes&&data.janCodes.length){JAN_CODES=data.janCodes;await db.put('settings',{key:'janCodes',value:JAN_CODES});}
       db.clearCache();
-      // monthly_statsをインポートデータから復元、なければバックフィル
+      setP('集計データを復元中...',90);
       if(data.monthlyStats&&data.monthlyStats.length){
         for(const s of data.monthlyStats) await db.put('monthly_stats',s);
         await db.put('settings',{key:'monthly_stats_v1',value:true});
       } else {
         await _backfillMonthlyStats();
       }
+      setP('✅ インポート完了！',100);
+      await new Promise(r=>setTimeout(r,700));
+      ov.remove();
       toast('インポートしました');await _render('settings',{},'設定');
-    }catch(e){toast('インポート失敗: '+e.message);}
+    }catch(e){ov.remove();toast('インポート失敗: '+e.message);}
   }
   async function _clearAll(){
     const ok=await confirmDialog('全データを削除しますか？\nこの操作は取り消せません。');if(!ok)return;
