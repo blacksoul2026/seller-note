@@ -798,15 +798,28 @@ const App = (() => {
       <div class="product-grid" id="__product-grid" oncontextmenu="App._showSortSheet();event.preventDefault();"></div>
       <div style="height:80px;"></div>`;
 
+    function updateCategoryBackBtn() {
+      const backBtn=document.getElementById('back-btn');
+      if(!backBtn) return;
+      if(selectedCategory!=='all'){
+        backBtn.className='header-btn back-circle';
+        backBtn.onclick=()=>App._setCategoryFilter('all');
+      } else {
+        backBtn.className='header-btn back-circle '+(pageStack.length>1?'':'hidden');
+        backBtn.onclick=()=>goBack();
+      }
+    }
+
     renderGrid();
     renderCategoryBar();
+    updateCategoryBackBtn();
     App._refreshProductGrid=async()=>{
       try {
         if(_currentSort==='lastSold_desc') await buildLastSoldMap();
       } catch(e) { _lastSoldMap={}; }
       renderGrid();
     };
-    App._setCategoryFilter=(cat)=>{selectedCategory=cat;_lastProductCategory=cat;renderCategoryBar();renderGrid();};
+    App._setCategoryFilter=(cat)=>{selectedCategory=cat;_lastProductCategory=cat;renderCategoryBar();renderGrid();updateCategoryBackBtn();};
 
     App._editCategoryOrder=()=>{
       const cats=getCategories();
