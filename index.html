@@ -13,7 +13,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=20260420-11">
+  <link rel="stylesheet" href="style.css?v=20260420-12">
 </head>
 <body>
   <!-- 起動中 / ログイン画面 -->
@@ -83,7 +83,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260420-11"></script>
+  <script src="app.js?v=20260420-12"></script>
   <script>
     // バージョンチェック：新バージョン検出時に強制リロード
     fetch('./version.json?_=' + Date.now(), {cache: 'no-store'})
@@ -122,6 +122,7 @@
     const fbApp = initializeApp(firebaseConfig);
     window._firestore = initializeFirestore(fbApp, { localCache: memoryLocalCache() });
     window._auth = getAuth(fbApp);
+
     window._fs = { collection, doc, getDoc, getDocFromCache, getDocs, getDocsFromCache, setDoc, deleteDoc, writeBatch, query, where };
     window._signOut = () => signOut(window._auth);
 
