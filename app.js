@@ -335,6 +335,7 @@ const App = (() => {
   const db = new DB();
   let currentTab = 'home';
   let pageStack = [];
+  let _lastAnaTab = 'monthly';
   let _currentSort = 'createdAt_desc';
   let _currentPhotos = [];
   let _loadedPhotos = new Set();
@@ -497,7 +498,7 @@ const App = (() => {
     }
 
     const now=new Date();
-    let tab='monthly';
+    let tab=_lastAnaTab;
     let mYear=now.getFullYear(),mMonth=now.getMonth();
     let aYear=now.getFullYear();
     let rkPeriod='month',rkYear=now.getFullYear(),rkMonth=now.getMonth(),rkSort='qty';
@@ -639,7 +640,7 @@ const App = (() => {
     main.innerHTML=`<div class="ana-tab-bar" id="__ana-tabs">${TABS.map(t=>`<button class="ana-tab${tab===t.k?' active':''}" data-tab="${t.k}" onclick="App._anaTab('${t.k}')">${t.l}</button>`).join('')}</div><div id="__ana-body"></div><div style="height:70px;"></div>`;
     renderContent();
 
-    App._anaTab=k=>{tab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
+    App._anaTab=k=>{tab=k;_lastAnaTab=k;document.querySelectorAll('.ana-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===k));renderContent();};
     App._anaNav=(type,dir)=>{
       if(type==='m'){mMonth+=dir;if(mMonth<0){mMonth=11;mYear--;}if(mMonth>11){mMonth=0;mYear++;}}
       else if(type==='y')aYear+=dir;
