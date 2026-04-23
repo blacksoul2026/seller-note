@@ -420,7 +420,9 @@ const App = (() => {
   }
 
   async function navigate(page,params={},title='') {
-    pageStack.push({page,params,title});
+    const main=document.getElementById('main');
+    if(pageStack.length>0) pageStack[pageStack.length-1].scrollTop=main?.scrollTop||0;
+    pageStack.push({page,params,title,scrollTop:0});
     await _render(page,params,title);
   }
 
@@ -429,6 +431,8 @@ const App = (() => {
       pageStack.pop();
       const prev=pageStack[pageStack.length-1];
       await _render(prev.page,prev.params,prev.title);
+      const main=document.getElementById('main');
+      if(main&&prev.scrollTop){setTimeout(()=>{main.scrollTop=prev.scrollTop;},80);}
     } else {
       await switchTab(currentTab);
     }
@@ -441,6 +445,7 @@ const App = (() => {
     const titleEl=document.getElementById('page-title');
     main.innerHTML='<div class="loading">読み込み中...</div>';
     main.scrollTop=0;
+    requestAnimationFrame(()=>{main.scrollTop=0;});
     titleEl.textContent=title||page;
     // 戻るボタン: pageStackに2つ以上あれば表示
     backBtn.className='header-btn back-circle '+(pageStack.length>1?'':'hidden');
@@ -564,7 +569,7 @@ const App = (() => {
         const yLabels=yTicks.map(t=>{
           const b=toBN(t).toFixed(1);
           const lbl=Math.abs(t)>=10000?(t/10000).toFixed(1)+'万':Math.abs(t)>=1000?(t/1000).toFixed(0)+'k':String(t);
-          return `<div style="position:absolute;bottom:${b}%;right:2px;transform:translateY(50%);font-size:8px;color:#999;white-space:nowrap;text-align:right;line-height:1;">${lbl}</div>`;
+          return `<div style="position:absolute;bottom:${b}%;right:2px;transform:translateY(50%);font-size:10px;color:#666;white-space:nowrap;text-align:right;line-height:1;font-weight:500;">${lbl}</div>`;
         }).join('');
         const gridLines=yTicks.map(t=>{
           const b=toBN(t).toFixed(1);const isZero=t===0;
@@ -583,7 +588,7 @@ const App = (() => {
         }).join('');
         const monthRow=chartData.map(d=>{const isCur=d.y===mYear&&d.m===mMonth;return `<div style="flex:1;text-align:center;font-size:9px;color:${isCur?'var(--primary)':'var(--text-secondary)'};font-weight:${isCur?'700':'400'};padding-top:3px;">${MO[d.m].replace('月','')}</div>`;}).join('');
         const chartH=Math.max(200,Math.min(520,window.innerHeight-400));
-        const chartHtml=`<div class="pmc-wrap" style="min-height:${chartH+90}px;"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:36px;position:relative;height:${chartH}px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:${chartH}px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:36px;margin-top:4px;">${monthRow}</div></div>`;
+        const chartHtml=`<div class="pmc-wrap" style="min-height:${chartH+90}px;"><div class="pmc-title" style="margin-bottom:10px;">直近6か月の利益</div><div style="display:flex;gap:0;"><div style="width:42px;position:relative;height:${chartH}px;flex-shrink:0;">${yLabels}</div><div style="flex:1;position:relative;height:${chartH}px;border-left:1px solid #e0e0e0;">${gridLines}<div style="position:absolute;inset:0;display:flex;gap:2px;padding:0 4px;">${bars}</div></div></div><div style="display:flex;padding-left:42px;margin-top:4px;">${monthRow}</div></div>`;
         body.innerHTML=`<div class="ana-period-bar"><button class="ana-nav" onclick="App._anaNav('m',-1)">‹</button><span class="ana-period-lbl">${mYear}年${MO[mMonth]}</span><button class="ana-nav" onclick="App._anaNav('m',1)">›</button></div>${sh(s)}${chartHtml}${s.count===0?'<div class="ana-empty">この月の売上はありません</div>':''}`;
 
       }else if(tab==='yearly'){
@@ -1942,8 +1947,8 @@ const App = (() => {
     let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
     let calDateBasis='saleDate', calSelectedDate=null;
 
+    if(filterStatus==='all') filterStatus='active';
     const FILTER_OPTS=[
-      {key:'all',       label:'全て'},
       {key:'active',    label:'発送前'},
       {key:'completed', label:'取引完了'},
     ];
