@@ -107,6 +107,34 @@ class DB {
     }
   }
 
+  async putBatch(store, docs) {
+    const CHUNK = 400; // Firestoreバッチ上限500の安全圏
+    const changes = [];
+    // キャッシュ更新と変更記録（コミット前）
+    for (const data of docs) {
+      const docId = this._key(store, data);
+      const old = (store==='listings'&&this._cache[store])
+        ? (this._cache[store].find(d=>String(this._key(store,d))===String(docId))||null) : null;
+      changes.push({old, data});
+      if (this._cache[store]) {
+        const idx = this._cache[store].findIndex(d=>String(this._key(store,d))===String(docId));
+        if (idx>=0) this._cache[store][idx]=data; else this._cache[store].push(data);
+      }
+    }
+    // 400件ずつチャンクに分けて並列コミット
+    const chunks = [];
+    for (let i=0; i<docs.length; i+=CHUNK) chunks.push(docs.slice(i,i+CHUNK));
+    await Promise.all(chunks.map(chunk=>{
+      const batch = window._fs.writeBatch(window._firestore);
+      for (const data of chunk) batch.set(this._doc(store, String(this._key(store,data))), data);
+      return batch.commit();
+    }));
+    if (store==='listings'&&this.onListingChange) {
+      for (const {old,data} of changes) this.onListingChange(old,data).catch(()=>{});
+    }
+    if (store!=='settings'&&store!=='monthly_stats') this._touchSyncMeta().catch(()=>{});
+  }
+
   async delete(store, id) {
     const old = (store === 'listings' && this._cache[store])
       ? (this._cache[store].find(d => String(this._key(store,d)) === String(id)) || null)
@@ -2434,10 +2462,9 @@ const App = (() => {
       if(!list.length)return;
       const ok=await confirmDialog(`発送待ち ${list.length}件を全て取引完了にしますか？\nこの操作で全件が画面から消えます。`,'全て完了','btn-success');
       if(!ok)return;
-      for(const l of list){
-        l.status='completed';await db.put('listings',l);
-        const idx=listings.findIndex(x=>x.id===l.id);if(idx>=0)listings[idx]=l;
-      }
+      const updated=list.map(l=>({...l,status:'completed'}));
+      await db.putBatch('listings',updated);
+      updated.forEach(l=>{const idx=listings.findIndex(x=>x.id===l.id);if(idx>=0)listings[idx]=l;});
       toast(`✅ ${list.length}件を取引完了にしました`);
       renderList();
     };
