@@ -432,7 +432,7 @@ const App = (() => {
       const prev=pageStack[pageStack.length-1];
       await _render(prev.page,prev.params,prev.title);
       const main=document.getElementById('main');
-      if(main&&prev.scrollTop){requestAnimationFrame(()=>{main.scrollTop=prev.scrollTop;});}
+      if(main&&prev.scrollTop){setTimeout(()=>{main.scrollTop=prev.scrollTop;},80);}
     } else {
       await switchTab(currentTab);
     }
@@ -1947,8 +1947,8 @@ const App = (() => {
     let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
     let calDateBasis='saleDate', calSelectedDate=null;
 
+    if(filterStatus==='all') filterStatus='active';
     const FILTER_OPTS=[
-      {key:'all',       label:'全て'},
       {key:'active',    label:'発送前'},
       {key:'completed', label:'取引完了'},
     ];
