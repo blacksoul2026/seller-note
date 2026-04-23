@@ -990,12 +990,22 @@ const App = (() => {
     const totalProfit=done.reduce((a,l)=>a+(Number(l.profit)||0),0);
     const avgRoi=totalSales>0?(totalProfit/totalSales*100).toFixed(1):'0.0';
 
-    // 取引中ステータス別集計
-    const activeStatusMap={};
-    active.forEach(l=>{const k=l.status||'before';activeStatusMap[k]=(activeStatusMap[k]||0)+1;});
-    const activeRows=Object.entries(activeStatusMap).map(([st,cnt])=>{
-      const s=STATUS_MAP[st]||STATUS_MAP.before;
-      return `<div class="detail-row"><span class="detail-label"><span class="badge ${s.badge}">${s.label}</span></span><span class="detail-value">${cnt}件</span></div>`;
+    // 取引中リスト（個別アイテム、タップでsale-detail）
+    active.sort((a,b)=>b.createdAt-a.createdAt);
+    const activeRows=active.map(l=>{
+      const pf=getPlatform(l.platform);
+      const st=STATUS_MAP[l.status]||STATUS_MAP.before;
+      return `<div class="detail-row" style="cursor:pointer;flex-wrap:wrap;gap:6px;" onclick="App.navigate('sale-detail',{id:'${l.id}'},'売上詳細')">
+        <span style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+          <span class="platform-badge" style="${platformBadgeStyle(l.platform)}">${pf.name}</span>
+          <span class="badge ${st.badge}" style="font-size:11px;">${st.label}</span>
+          <span style="font-size:12px;color:var(--text-secondary);">${fmtDate(l.saleDate)}</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <span style="font-size:14px;font-weight:600;">${yen(Number(l.salePrice)||0)}</span>
+          <span style="color:var(--text-secondary);font-size:14px;">›</span>
+        </span>
+      </div>`;
     }).join('');
 
     // プラットフォーム別販売数（クリックで取引閲覧）
@@ -2558,6 +2568,10 @@ const App = (() => {
         <div class="profit-row"><span class="p-label">利益率</span><span class="p-value">${l.salePrice>0?(profit/l.salePrice*100).toFixed(1):'0.0'}%</span></div>
       </div>
       ${l.memo?`<div style="background:var(--white);padding:12px 16px;margin-bottom:10px;font-size:14px;white-space:pre-wrap;">📝 ${esc(l.memo)}</div>`:''}
+      ${l.productId?`<div style="background:var(--white);padding:12px 16px;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;" onclick="App.navigate('product-detail',{id:'${l.productId}'},'${esc(l.productName)}')">
+        <span style="font-size:14px;font-weight:500;">📦 商品マスタを見る</span>
+        <span style="color:var(--text-secondary);">›</span>
+      </div>`:''}
       <div style="padding:0 12px;display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
         ${['payment','shipping','review','listing'].includes(l.status)?`<button class="btn btn-success btn-full" onclick="App._completeFromDetail('${id}')">取引完了にする</button>`:''}
         <button class="btn btn-outline-red btn-full btn-sm" onclick="App._showStatusPopupSale('${id}')">ステータスを変更</button>
@@ -2572,7 +2586,7 @@ const App = (() => {
       document.body.appendChild(overlay);
       overlay.onclick=e=>{const btn=e.target.closest('.status-popup-item');if(btn){db.get('listings',lid).then(s=>{if(s){s.status=btn.dataset.key;db.put('listings',s).then(()=>{toast(STATUS_MAP[btn.dataset.key]?.label+'にしました');_render('sale-detail',{id:lid},'売上詳細');});}});}overlay.remove();};
     };
-    App._deleteSale=async sid=>{const ok=await confirmDialog('この売上を削除しますか？');if(!ok)return;await db.delete('listings',sid);toast('削除しました');pageStack.pop();pageStack.pop();await _render('sales',{},'売上管理表');};
+    App._deleteSale=async sid=>{const ok=await confirmDialog('この売上を削除しますか？');if(!ok)return;await db.delete('listings',sid);toast('削除しました');pageStack.pop();const prev=pageStack[pageStack.length-1];if(prev)await _render(prev.page,prev.params,prev.title);else await _render('sales',{},'売上管理表');};
   }
 
   // =====================================================================
