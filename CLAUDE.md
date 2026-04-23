@@ -6,13 +6,6 @@
 
 ---
 
-## 話し方ルール（必須）
-**必ず女性秘書風・丁寧語で返答すること。**
-「〜ございます」「〜でしょうか」「かしこまりました」「〜いたします」など。
-技術的な話題でも崩さない。
-
----
-
 ## アプリ概要
 
 **セラーノート** — ECせどり・フリマ出品者向けの在庫・売上管理PWAアプリ
@@ -95,6 +88,35 @@ apiKey: "AIzaSyA3sQ8oKNfUYts3qrxEz3EkTZzsnEFF2AA"
 
 ---
 
+## デプロイ手順（毎回必ずやること）
+
+**本番URL**: `https://blacksoul2026.github.io/seller-note`
+**方法**: GitHub Pages（masterブランチから自動配信）
+
+### コード修正後の手順（必須）
+
+1. **バージョンを上げる**（毎回）
+   - `version.json` の `v` の数字を +1 する（例：`20260420-10` → `20260420-11`）
+   - `index.html` の `app.js?v=` と `style.css?v=` も同じ番号に揃える
+
+2. **GitHubにプッシュ（3ファイル必ずコミットに含める）**
+   - `app.js` ← ロジック変更時
+   - `index.html` ← バージョン番号・Firebase設定変更時（毎回）
+   - `style.css` ← スタイル変更時
+   - `version.json` ← 毎回必ず
+
+3. **iPhoneで確認**
+   - GitHub Pages反映まで1〜3分かかる
+   - Safariでページを引っ張って更新すれば新バージョンが読み込まれる
+
+### 重要注意事項
+
+- **`persistentLocalCache`は絶対使わない** → iOSでFirestoreが「client has already been terminated」エラーになる
+- 現在は `memoryLocalCache()` を使用中（これを維持すること）
+- バージョンを上げないとiPhoneで古いキャッシュが残り続ける
+
+---
+
 ## よく出るエラーのパターン（随時追記）
 
-※エラーが出たら内容を教えてもらい、ここに追記していく
+- **"The client has already been terminated"** → `persistentLocalCache`（IndexedDB）をiOSが強制終了する問題。`memoryLocalCache`に変更済み。再発したら index.html の `initializeFirestore` を確認。
