@@ -1787,8 +1787,8 @@ const App = (() => {
     if(pfKey){actionBtn.className='header-btn hidden';}
     else{actionBtn.className='header-btn pill-btn'; actionBtn.textContent='＋追加';
     actionBtn.onclick=()=>navigate('sale-form',{productId,productName:product?.name||'',purchasePrice:product?.purchasePrice||0},'売上を記録');}
-    // pfKeyモードは「取引中」デフォルト、defaultFilterがあればそれ、通常は「すべて」
-    let filterStatus=pfKey?'active':(defaultFilter||'all');
+    // 発送前をデフォルト
+    let filterStatus=defaultFilter||'active';
 
     function grouped(list){
       const groups={};
@@ -1799,7 +1799,7 @@ const App = (() => {
     function renderItem(l){
       const p=getPlatform(l.platform),st=STATUS_MAP[l.status]||STATUS_MAP.before,profit=Number(l.profit)||0;
       const thumb=product?.photos?.[0]?`<img src="${product.photos[0]}" alt="" style="width:100%;height:100%;object-fit:cover;">`:`<div class="listing-thumb-placeholder">📦</div>`;
-      const canComplete=['payment','shipping','review','listing'].includes(l.status);
+      const canComplete=!['completed','canceled','cancelled'].includes(l.status);
       return `<div class="listing-item">
         <div class="listing-thumb">${thumb}</div>
         <div class="listing-body">
@@ -1817,7 +1817,7 @@ const App = (() => {
         </div>
         <div class="listing-right">
           ${canComplete?`<button class="complete-btn" onclick="App._setStatus('${l.id}','completed')">取引完了</button>`:`<span class="badge ${st.badge}">${st.label}</span>`}
-          <button class="status-change-btn" onclick="App._showStatusPopup('${l.id}')">変更</button>
+          <button onclick="App._deleteListingItem('${l.id}')" style="background:none;border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:11px;padding:3px 8px;cursor:pointer;margin-top:4px;white-space:nowrap;">削除</button>
         </div>
       </div>`;
     }
@@ -1826,25 +1826,18 @@ const App = (() => {
       const body=document.getElementById('__listing-body');
       if(!body) return;
       const list=listings.filter(l=>{
-        if(filterStatus==='all') return true;
         if(filterStatus==='active') return!['completed','canceled','cancelled'].includes(l.status);
-        if(filterStatus==='trading') return['payment','shipping','review','listing'].includes(l.status);
-        return l.status===filterStatus;
+        if(filterStatus==='completed') return l.status==='completed';
+        return true;
       });
       if(!list.length){body.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>取引がありません</p></div>`;return;}
       body.innerHTML=grouped(list);
     }
 
-    // pfKeyモード: 取引中・取引完了のみ表示
-    const tabsHtml=pfKey
-      ?`<button class="filter-tab${filterStatus==='active'?' active':''}" data-f="active">取引中</button>
-         <button class="filter-tab${filterStatus==='completed'?' active':''}" data-f="completed">取引完了</button>`
-      :`<button class="filter-tab${filterStatus==='all'?' active':''}" data-f="all">すべて</button>
-        <button class="filter-tab${filterStatus==='trading'?' active':''}" data-f="trading">取引中</button>
-        <button class="filter-tab${filterStatus==='completed'?' active':''}" data-f="completed">完了</button>
-        <button class="filter-tab${filterStatus==='before'?' active':''}" data-f="before">出品前</button>
-        <button class="filter-tab${filterStatus==='listing'?' active':''}" data-f="listing">出品中</button>
-        <button class="filter-tab${filterStatus==='canceled'?' active':''}" data-f="canceled">キャンセル</button>`;
+    // フィルタータブ: 発送前 / 取引完了 の2つに統一
+    const tabsHtml=`
+      <button class="filter-tab${filterStatus==='active'?' active':''}" data-f="active">発送前</button>
+      <button class="filter-tab${filterStatus==='completed'?' active':''}" data-f="completed">取引完了</button>`;
 
     main.innerHTML=`
       <div class="filter-tabs">${tabsHtml}</div>
@@ -1865,6 +1858,13 @@ const App = (() => {
       const idx=listings.findIndex(x=>x.id===lid);if(idx>=0)listings[idx]=l;
       if(status==='completed'&&l.productId){const prod=await db.get('products',l.productId);if(prod){prod.stockCount=Math.max(0,(prod.stockCount||0)-1);await db.put('products',prod);}}
       toast(STATUS_MAP[status]?.label+'にしました');renderList();
+    };
+    App._deleteListingItem=async lid=>{
+      const ok=await confirmDialog('この取引を削除しますか？','削除','btn-danger');
+      if(!ok)return;
+      await db.delete('listings',lid);
+      listings=listings.filter(l=>l.id!==lid);
+      toast('削除しました');renderList();
     };
     App._showStatusPopup=async(lid)=>{
       const overlay=document.createElement('div');overlay.className='status-popup-overlay';
@@ -2568,8 +2568,8 @@ const App = (() => {
         <div class="profit-row"><span class="p-label">利益率</span><span class="p-value">${l.salePrice>0?(profit/l.salePrice*100).toFixed(1):'0.0'}%</span></div>
       </div>
       ${l.memo?`<div style="background:var(--white);padding:12px 16px;margin-bottom:10px;font-size:14px;white-space:pre-wrap;">📝 ${esc(l.memo)}</div>`:''}
-      ${l.productId?`<div style="background:var(--white);padding:12px 16px;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;" onclick="App.navigate('product-detail',{id:'${l.productId}'},'${esc(l.productName)}')">
-        <span style="font-size:14px;font-weight:500;">📦 商品マスタを見る</span>
+      ${l.productId?`<div style="background:var(--white);padding:12px 16px;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;" onclick="App.navigate('listings',{id:'${l.productId}',defaultFilter:'active'},'出品一覧')">
+        <span style="font-size:14px;font-weight:500;">📋 同じ商品の出品一覧を見る</span>
         <span style="color:var(--text-secondary);">›</span>
       </div>`:''}
       <div style="padding:0 12px;display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
