@@ -5,7 +5,10 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('private:', d.get\\('private'\\)\\); print\\('homepage:', d.get\\('homepage'\\)\\); print\\('default_branch:', d.get\\('default_branch'\\)\\)\")",
       "Bash(gh repo *)",
       "Bash(ls -la *.json *.rc)",
-      "Bash(dir /b *.json)"
+      "Bash(dir /b *.json)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
