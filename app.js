@@ -1687,6 +1687,7 @@ const App = (() => {
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">販売価格 <span style="color:var(--danger);">*</span></div>
           <div class="outbound-price-row">
             <input type="number" inputmode="numeric" id="__ob-price" placeholder="0" value="${product.salePrice||''}">
+            <button type="button" onclick="const inp=this.closest('.outbound-price-row').querySelector('input');inp.value='';inp.focus();App._calcObProfit();" style="background:none;border:none;color:var(--text-secondary);font-size:20px;line-height:1;padding:0 2px;cursor:pointer;opacity:0.6;">×</button>
             <span>円</span>
           </div>
 
@@ -1995,10 +1996,19 @@ const App = (() => {
     function sortList(list){
       const collatorJa=new Intl.Collator('ja',{sensitivity:'base'});
       const collatorAn=new Intl.Collator('en',{numeric:true,sensitivity:'base'});
+      // あ〜わ=0, A〜Z=1, 0〜9=2, その他=3, 空=4
+      function codeCat(s){
+        if(!s) return 4;
+        const c=s.charCodeAt(0);
+        if((c>=0x3041&&c<=0x9FFF)||(c>=0xF900&&c<=0xFAFF)) return 0; // ひらがな/カタカナ/漢字
+        if((c>=0x41&&c<=0x5A)||(c>=0x61&&c<=0x7A)||(c>=0xFF21&&c<=0xFF5A)) return 1; // A-Z/a-z/全角
+        if((c>=0x30&&c<=0x39)||(c>=0xFF10&&c<=0xFF19)) return 2; // 0-9
+        return 3;
+      }
       switch(sortMode){
         case 'date':     return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
         case 'date_asc': return list.sort((a,b)=>new Date(a.saleDate||0)-new Date(b.saleDate||0)||a.createdAt-b.createdAt);
-        case 'code_jp':  return list.sort((a,b)=>collatorJa.compare(a.productCode||'',b.productCode||''));
+        case 'code_jp':  return list.sort((a,b)=>{const ca=codeCat(a.productCode||''),cb=codeCat(b.productCode||'');return ca!==cb?ca-cb:collatorJa.compare(a.productCode||'',b.productCode||'');});
         case 'code_an':  return list.sort((a,b)=>collatorAn.compare(a.productCode||'',b.productCode||''));
         default:         return list.sort((a,b)=>new Date(b.saleDate||0)-new Date(a.saleDate||0)||b.createdAt-a.createdAt);
       }
@@ -2174,9 +2184,9 @@ const App = (() => {
         });
         const pfOrder=PLATFORMS.map(p=>p.key);
         const sortedKeys=[...pfOrder.filter(k=>groups[k]),...Object.keys(groups).filter(k=>!pfOrder.includes(k))];
-        return sortedKeys.map(k=>groups[k]).map(g=>
-          `<div class="sales-month-hd" style="background:${g.color};">${g.label}（${g.items.length}件）</div>`+
-          g.items.map(l=>renderItem(l)).join('')
+        return sortedKeys.map(k=>
+          `<div id="__pf-section-${k}" class="sales-month-hd" style="background:${groups[k].color};">${groups[k].label}（${groups[k].items.length}件）</div>`+
+          groups[k].items.map(l=>renderItem(l)).join('')
         ).join('');
       } else if(sortMode==='code_jp'||sortMode==='code_an'){
         // 管理番号順 — グループ化せずフラットに全件表示
@@ -2217,6 +2227,21 @@ const App = (() => {
           bulkBtn.parentElement.classList.add('hidden');
         }
       }
+      // プラットフォームショートカットバー
+      const pfBar=document.getElementById('__pf-shortcut-bar');
+      if(pfBar){
+        if(sortMode==='platform'&&list.length>0){
+          const pfOrder=PLATFORMS.map(p=>p.key);
+          const pfKeys=[...pfOrder.filter(k=>list.some(l=>l.platform===k)),...list.map(l=>l.platform).filter((k,i,arr)=>!pfOrder.includes(k)&&arr.indexOf(k)===i)];
+          pfBar.innerHTML=pfKeys.map(k=>{
+            const p=getPlatform(k);
+            return `<button onclick="document.getElementById('__pf-section-${k}')?.scrollIntoView({behavior:'smooth',block:'start'})" style="background:${p.color};color:${isLightColor(p.color)?'#000':'#fff'};border:none;border-radius:20px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">${p.name}</button>`;
+          }).join('');
+          pfBar.classList.remove('hidden');
+        } else {
+          pfBar.classList.add('hidden');
+        }
+      }
 
       const body=document.getElementById('__sales-body');if(!body)return;
       if(!list.length){
@@ -2241,9 +2266,10 @@ const App = (() => {
     function renderCalendar(){
       const list=filtered();
       const body=document.getElementById('__sales-body');if(!body)return;
-      // 一括完了バー非表示
+      // 一括完了バー・ショートカットバー非表示
       const bulkWrap=document.getElementById('__bulk-ship-wrap');
       if(bulkWrap)bulkWrap.classList.add('hidden');
+      document.getElementById('__pf-shortcut-bar')?.classList.add('hidden');
 
       // 日付マップ構築
       const dateMap={};
@@ -2386,6 +2412,8 @@ const App = (() => {
           <div id="__sales-stats" style="padding:0 14px 10px;border-top:1px solid var(--gray-border);"></div>
         </div>
       </div>
+      <!-- プラットフォームショートカット -->
+      <div id="__pf-shortcut-bar" class="hidden" style="overflow-x:auto;white-space:nowrap;padding:8px 12px 4px;display:flex;gap:6px;"></div>
       <!-- 一括取引完了バー -->
       <div id="__bulk-ship-wrap" class="bulk-ship-wrap hidden">
         <button id="__bulk-ship-btn" class="bulk-ship-btn" onclick="App._bulkComplete()">✅ 0件を全て取引完了にする</button>
