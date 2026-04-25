@@ -2684,7 +2684,24 @@ const App = (() => {
       document.body.appendChild(overlay);
       overlay.onclick=e=>{const btn=e.target.closest('.status-popup-item');if(btn){db.get('listings',lid).then(s=>{if(s){s.status=btn.dataset.key;db.put('listings',s).then(()=>{toast(STATUS_MAP[btn.dataset.key]?.label+'にしました');_render('sale-detail',{id:lid},'売上詳細');});}});}overlay.remove();};
     };
-    App._deleteSale=async sid=>{const ok=await confirmDialog('この売上を削除しますか？');if(!ok)return;await db.delete('listings',sid);toast('削除しました');pageStack.pop();const prev=pageStack[pageStack.length-1];if(prev)await _render(prev.page,prev.params,prev.title);else await _render('sales',{},'売上管理表');};
+    App._deleteSale=async sid=>{
+      const sale=await db.get('listings',sid);
+      const hasProd=!!(sale?.productId);
+      const msg=hasProd?'この売上を削除して在庫を1個戻しますか？':'この売上を削除しますか？';
+      const btnLabel=hasProd?'削除して在庫を戻す':'削除';
+      const ok=await confirmDialog(msg,btnLabel,'btn-danger');
+      if(!ok)return;
+      await db.delete('listings',sid);
+      if(hasProd){
+        const prod=await db.get('products',sale.productId);
+        if(prod){prod.stockCount=(prod.stockCount||0)+1;prod.updatedAt=Date.now();await db.put('products',prod);}
+      }
+      toast(hasProd?'削除しました（在庫+1）':'削除しました');
+      pageStack.pop();
+      const prev=pageStack[pageStack.length-1];
+      if(prev)await _render(prev.page,prev.params,prev.title);
+      else await _render('sales',{},'売上管理表');
+    };
   }
 
   // =====================================================================
