@@ -1,4 +1,4 @@
-// 全キャッシュ削除 & Service Worker自己解除
+// 全キャッシュ削除 & Service Worker自己解除 v24
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => {
   e.waitUntil(
