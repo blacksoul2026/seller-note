@@ -1069,37 +1069,43 @@ const App = (() => {
 
     function anomalies(p) {
       const w = [];
-      if (!p.name)                                    w.push('商品名なし');
+      if (!p.photos || !p.photos.length)              w.push('画像なし');
       if (p.stockCount === undefined || p.stockCount === null || String(p.stockCount) === '') w.push('在庫数未設定');
       else if (p.stockCount < 0)                      w.push('在庫マイナス');
-      if (!p.purchasePrice && p.purchasePrice !== 0)  w.push('原価未設定');
+      if (p.purchasePrice === undefined || p.purchasePrice === null || String(p.purchasePrice) === '') w.push('原価未入力');
       else if (p.purchasePrice === 0)                 w.push('原価0円');
       return w;
     }
 
     const anomalyCount = sorted.filter(p => anomalies(p).length > 0).length;
 
-    const rows = sorted.map(p => {
+    const cards = sorted.map(p => {
       const aw = anomalies(p);
       const hasW = aw.length > 0;
       const stock = p.stockCount ?? 0;
       const cost  = p.purchasePrice || 0;
       const total = stock * cost;
       const skuCode = esc(p.sku || p.code || '−');
-      const rowBg   = hasW ? 'background:#FFF8F0;' : '';
-      const warnHtml = hasW ? `<div style="font-size:10px;color:var(--warning);margin-top:2px;">${aw.join('・')}</div>` : '';
-      const stockStyle = stock < 0 ? 'color:var(--danger);font-weight:700;' : stock === 0 ? 'color:var(--gray);' : '';
-      const costStyle  = cost === 0 ? 'color:var(--warning);' : '';
-      return `<tr style="${rowBg}border-bottom:1px solid var(--gray-border);cursor:pointer;" onclick="App.navigate('product-detail',{id:'${p.id}'},'${esc(p.name||'商品詳細')}')">
-        <td style="padding:8px 6px 8px 14px;font-size:11px;color:var(--text-secondary);white-space:nowrap;vertical-align:top;">${skuCode}</td>
-        <td style="padding:8px 6px;vertical-align:top;">
-          <div style="font-size:13px;font-weight:500;">${esc(p.name||'(名前なし)')}</div>
+      const cardBg  = hasW ? 'background:#FFF8F0;border-left:3px solid var(--warning);' : 'background:var(--white);border-left:3px solid transparent;';
+      const thumb   = p.photos && p.photos.length
+        ? `<img src="${p.photos[0]}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;flex-shrink:0;">`
+        : `<div style="width:60px;height:60px;border-radius:6px;background:var(--gray-light);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;">📦</div>`;
+      const stockStyle = stock < 0 ? 'color:var(--danger);font-weight:700;' : stock === 0 ? 'color:var(--gray);' : 'color:var(--text);font-weight:600;';
+      const costStyle  = cost === 0 ? 'color:var(--warning);' : 'color:var(--text-secondary);';
+      const warnHtml   = hasW ? `<div style="margin-top:4px;font-size:10px;color:var(--warning);">⚠️ ${aw.join('・')}</div>` : '';
+      return `<div style="${cardBg}border-bottom:1px solid var(--gray-border);padding:10px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="App.navigate('product-detail',{id:'${p.id}'},'${esc(p.name||'商品詳細')}')">
+        ${thumb}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11px;color:var(--text-secondary);margin-bottom:2px;">${skuCode}</div>
+          <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;">
+            <span style="font-size:15px;${stockStyle}">在庫 ${stock}</span>
+            <span style="font-size:12px;${costStyle}">原価 ${yen(cost)}</span>
+            <span style="font-size:12px;font-weight:600;color:var(--text);">計 ${yen(total)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:3px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${esc(p.name||'(商品名なし)')}</div>
           ${warnHtml}
-        </td>
-        <td style="padding:8px 6px;text-align:right;font-weight:600;${stockStyle}vertical-align:top;">${stock}</td>
-        <td style="padding:8px 6px;text-align:right;font-size:12px;${costStyle}vertical-align:top;">${yen(cost)}</td>
-        <td style="padding:8px 14px 8px 6px;text-align:right;font-size:12px;font-weight:600;vertical-align:top;">${yen(total)}</td>
-      </tr>`;
+        </div>
+      </div>`;
     }).join('');
 
     main.innerHTML = `
@@ -1118,22 +1124,9 @@ const App = (() => {
             <div style="font-size:16px;font-weight:700;color:var(--primary);line-height:1.2;">${yen(totalCost)}</div>
           </div>
         </div>
-        ${anomalyCount > 0 ? `<div style="margin-top:8px;padding:7px 10px;background:#FFF3E0;border-radius:8px;font-size:12px;color:var(--warning);">⚠️ ${anomalyCount}件にデータ異常があります（オレンジ行を確認してください）</div>` : '<div style="margin-top:8px;padding:7px 10px;background:#E8F5E9;border-radius:8px;font-size:12px;color:var(--success);">✅ 異常データはありません</div>'}
+        ${anomalyCount > 0 ? `<div style="margin-top:8px;padding:7px 10px;background:#FFF3E0;border-radius:8px;font-size:12px;color:var(--warning);">⚠️ ${anomalyCount}件に確認が必要なデータがあります</div>` : '<div style="margin-top:8px;padding:7px 10px;background:#E8F5E9;border-radius:8px;font-size:12px;color:var(--success);">✅ 異常データはありません</div>'}
       </div>
-      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
-        <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:340px;">
-          <thead>
-            <tr style="background:var(--gray-light);">
-              <th style="padding:8px 6px 8px 14px;text-align:left;font-size:11px;color:var(--text-secondary);white-space:nowrap;font-weight:600;">管理番号</th>
-              <th style="padding:8px 6px;text-align:left;font-size:11px;color:var(--text-secondary);font-weight:600;">商品名</th>
-              <th style="padding:8px 6px;text-align:right;font-size:11px;color:var(--text-secondary);white-space:nowrap;font-weight:600;">在庫数</th>
-              <th style="padding:8px 6px;text-align:right;font-size:11px;color:var(--text-secondary);white-space:nowrap;font-weight:600;">登録原価</th>
-              <th style="padding:8px 14px 8px 6px;text-align:right;font-size:11px;color:var(--text-secondary);white-space:nowrap;font-weight:600;">在庫原価</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
+      <div>${cards}</div>
       <div style="height:80px;"></div>`;
   }
 
@@ -3713,11 +3706,15 @@ const App = (() => {
     const list = _inventoryProducts;
     if (!list || !list.length) { toast('棚卸データがありません'); return; }
     const rows = [['管理番号/SKU','商品名','現在庫数','登録原価','在庫原価合計','メモ']];
+    let totalStock = 0, totalCost = 0;
     list.forEach(p => {
       const stock = p.stockCount ?? 0;
       const cost  = p.purchasePrice || 0;
+      totalStock += stock;
+      totalCost  += stock * cost;
       rows.push([p.sku || p.code || '', p.name || '', stock, cost, stock * cost, p.memo || '']);
     });
+    rows.push(['合計', `商品数 ${list.length}件`, totalStock, '', totalCost, '棚卸CSV合計']);
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
     const blob = new Blob(['﻿' + csv], {type:'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
