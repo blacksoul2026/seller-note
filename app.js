@@ -1173,7 +1173,7 @@ const App = (() => {
     const pfRows=pfEntries.map(([pfKey,cnt])=>{
       const pf=getPlatform(pfKey);
       return `<div class="detail-row" style="cursor:pointer;" onclick="App._showPfListings('${pfKey}')"><span class="detail-label"><span class="platform-badge" style="${platformBadgeStyle(pfKey)}">${pf.name}</span></span><span class="detail-value">${cnt}個 <span style="color:var(--text-secondary);font-size:12px;">›</span></span></div>`;
-    }).join('')+(pfEntries.length>1?`<div class="detail-row" style="border-top:1px solid var(--gray-border);"><span class="detail-label" style="font-weight:600;">合計</span><span class="detail-value" style="font-weight:600;">${done.length}個</span></div>`:'');
+    }).join('')+(pfEntries.length>1?`<div class="detail-row" style="border-top:1px solid var(--gray-border);cursor:pointer;" onclick="App._showAllPfListings()"><span class="detail-label" style="font-weight:600;">合計</span><span class="detail-value" style="font-weight:600;">${done.length}個 <span style="color:var(--text-secondary);font-size:12px;">›</span></span></div>`:'');
 
     // 写真（スクエア表示 + 矢印ナビ）
     let photosHtml='';
@@ -1317,6 +1317,9 @@ const App = (() => {
     App._showPfListings=pfKey=>{
       const pf=getPlatform(pfKey);
       navigate('listings',{id,pfKey},`${pf.name} 取引一覧`);
+    };
+    App._showAllPfListings=()=>{
+      navigate('listings',{id,defaultFilter:'completed'},'全プラットフォーム 取引一覧');
     };
     // 取引中一覧 → 発送前フィルターで出品一覧ページへ
     App._showActiveListings=()=>{
