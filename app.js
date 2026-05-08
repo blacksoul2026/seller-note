@@ -2041,7 +2041,11 @@ const App = (() => {
   // SALES（売上管理表）
   // =====================================================================
   async function pgSales(main,actionBtn){
-    const allListingsRaw=await db.getAll('listings');
+    // listings と products を並列取得
+    const [allListingsRaw, allProducts]=await Promise.all([
+      db.getAll('listings'),
+      db.getAll('products'),
+    ]);
     allListingsRaw.sort((a,b)=>b.createdAt-a.createdAt);
     // デフォルトは直近6ヶ月の完了/キャンセル + 全ての未完了を表示
     // （データが増えても画面描画が重くならないようにする）
@@ -2056,8 +2060,6 @@ const App = (() => {
       });
     }
     let listings = getListings();
-    // 商品マスタ読み込み（更新日・仕入日ソート用）
-    const allProducts=await db.getAll('products');
     const productMap=Object.fromEntries(allProducts.map(p=>[p.id,p]));
 
     // ヘッダーボタン設定
@@ -3790,6 +3792,8 @@ const App = (() => {
   // =====================================================================
   async function init(){
     await db.open();
+    // 設定を一括キャッシュ（Firestore read 1回で全設定をメモリに載せる → 以降の get は瞬時）
+    await db.getAll('settings');
     // DBからプラットフォームを読み込む
     const saved=await db.get('settings','platforms');
     if(saved?.value) PLATFORMS=saved.value;
@@ -3833,6 +3837,8 @@ const App = (() => {
     // 前回のタブを読み込む
     const savedTab=await db.get('settings','lastTab');
     await switchTab(savedTab?.value||'home');
+    // ホーム表示後にバックグラウンドで主要データを先読みしてキャッシュ
+    Promise.all([db.getAll('products'),db.getAll('listings'),db.getAll('monthly_stats')]).catch(()=>{});
   }
 
   return {
