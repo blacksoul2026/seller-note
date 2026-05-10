@@ -316,6 +316,38 @@ function resizeImage(b64,maxW=480,maxH=480) {
   });
 }
 
+// base64 data URL → Blob（Storage URL の場合はfetchで取得）
+async function _photoToBlob(ph) {
+  if (ph.startsWith('data:')) {
+    const arr=ph.split(',');
+    const mime=arr[0].match(/:(.*?);/)?.[1]||'image/jpeg';
+    const b=atob(arr[1]||'');
+    const u8=new Uint8Array(b.length);
+    for(let j=0;j<b.length;j++)u8[j]=b.charCodeAt(j);
+    return new Blob([u8],{type:mime});
+  }
+  const res=await fetch(ph);
+  return await res.blob();
+}
+
+// 新規base64写真をFirebase Storageへアップロードし、URLの配列を返す
+async function uploadPhotosToStorage(photos, productId) {
+  if (!window._storage || !window._st) return photos;
+  const uid=window._currentUser?.uid;
+  if (!uid) return photos;
+  const result=[];
+  for(let i=0;i<photos.length;i++){
+    const ph=photos[i];
+    if(!ph.startsWith('data:')){result.push(ph);continue;} // 既にURL
+    const path=`users/${uid}/products/${productId}/${Date.now()}_${i}.jpg`;
+    const storageRef=window._st.ref(window._storage,path);
+    const snap=await window._st.uploadString(storageRef,ph,'data_url');
+    const url=await window._st.getDownloadURL(snap.ref);
+    result.push(url);
+  }
+  return result;
+}
+
 function _copyText(text,msg='コピーしました') {
   const decoded=decodeEsc(text);
   if(navigator.clipboard?.writeText){navigator.clipboard.writeText(decoded).then(()=>toast('✅ '+msg)).catch(()=>_fallbackCopy(decoded,msg));}
@@ -1579,8 +1611,9 @@ const App = (() => {
         updatedAt:Date.now(),
       };
       const hasNewPhotos = (_currentPhotos||[]).some(p=>!_loadedPhotos.has(p));
-      if (hasNewPhotos) toast('📤 写真をクラウドにアップロード中...', 12000);
+      if (hasNewPhotos) toast('📤 写真をStorageにアップロード中...', 12000);
       try {
+        product.photos = await uploadPhotosToStorage(product.photos, product.id);
         await db.put('products',product);
       } catch(e) {
         toast('❌ 保存エラー: ' + (e.message||e), 5000);
@@ -3593,14 +3626,10 @@ const App = (() => {
       if(navigator.share){
         try{
           toast('準備中...', 5000);
-          const files=photos.map((ph,i)=>{
-            const arr=ph.split(',');
-            const mime=arr[0].match(/:(.*?);/)?.[1]||'image/jpeg';
-            const b=atob(arr[1]||'');
-            const u8=new Uint8Array(b.length);
-            for(let j=0;j<b.length;j++)u8[j]=b.charCodeAt(j);
-            return new File([u8],`photo_${i+1}.jpg`,{type:mime});
-          });
+          const files=await Promise.all(photos.map(async(ph,i)=>{
+            const blob=await _photoToBlob(ph);
+            return new File([blob],`photo_${i+1}.jpg`,{type:blob.type||'image/jpeg'});
+          }));
           const canShare=navigator.canShare?.({files}) ?? true;
           if(canShare){
             await navigator.share({files,title:'商品画像'});
@@ -3618,12 +3647,15 @@ const App = (() => {
       ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
       return;
     }
-    // デスクトップ: ダウンロードリンクで保存
+    // デスクトップ: Blobに変換してダウンロード（クロスオリジンURL対応）
     toast(`${photos.length}枚を保存中...`);
     for(let i=0;i<photos.length;i++){
       if(i>0) await new Promise(r=>setTimeout(r,300));
-      const a=document.createElement('a');a.href=photos[i];a.download=`photo_${i+1}.jpg`;
+      const blob=await _photoToBlob(photos[i]);
+      const blobUrl=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=blobUrl;a.download=`photo_${i+1}.jpg`;
       document.body.appendChild(a);a.click();a.remove();
+      URL.revokeObjectURL(blobUrl);
     }
     toast(`✅ ${photos.length}枚を保存しました`);
   }
